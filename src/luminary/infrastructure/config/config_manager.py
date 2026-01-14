@@ -27,6 +27,10 @@ class ConfigManager:
             "model": None,
             "threshold": 0.7,
         },
+        "gitlab": {
+            "url": None,  # None = from GITLAB_URL env or gitlab.com
+            "token": None,  # None = from GITLAB_TOKEN env
+        },
         "ignore": {
             "patterns": [
                 "*.lock",
@@ -179,6 +183,14 @@ class ConfigManager:
             Retry configuration dictionary
         """
         return self.config.get("retry", {}).copy()
+
+    def get_gitlab_config(self) -> Dict[str, Any]:
+        """Get GitLab configuration
+        
+        Returns:
+            GitLab configuration dictionary
+        """
+        return self.config.get("gitlab", {}).copy()
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value by key (supports dot notation)

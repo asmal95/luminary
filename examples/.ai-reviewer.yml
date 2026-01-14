@@ -15,6 +15,11 @@ validator:
   model: null  # null = use same as llm model
   threshold: 0.7  # Minimum score threshold (0.0-1.0)
 
+# GitLab configuration
+gitlab:
+  url: null  # null = from GITLAB_URL env or gitlab.com
+  token: null  # null = from GITLAB_TOKEN env (required for MR review)
+
 # Files to ignore
 ignore:
   patterns:
