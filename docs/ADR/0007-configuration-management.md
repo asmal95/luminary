@@ -1,0 +1,87 @@
+# ADR-0007: Управление конфигурацией
+
+## Статус
+Принято
+
+## Контекст
+Система должна быть гибко настраиваемой через конфигурационные файлы и CLI аргументы. Необходимо определить иерархию конфигов и настраиваемые параметры.
+
+## Решение
+
+### Иерархия конфигурации (приоритет от низкого к высокому):
+1. **Дефолтные значения** (hardcoded в коде)
+2. **`.ai-reviewer.yml`** в корне проекта
+3. **CLI аргументы** (наивысший приоритет)
+
+### Структура `.ai-reviewer.yml`:
+```yaml
+# LLM провайдер
+llm:
+  provider: openrouter  # openrouter, openai, deepseek, vllm
+  model: anthropic/claude-3.5-sonnet
+  temperature: 0.7
+  max_tokens: 2000
+  top_p: 0.9
+
+# Валидатор комментариев
+validator:
+  provider: openrouter  # может быть другой
+  model: anthropic/claude-3-haiku  # более легкая модель
+  enabled: true
+
+# Промпты (опционально, иначе используются дефолтные)
+prompts:
+  review: |
+    Твой промпт для ревью...
+  validation: |
+    Твой промпт для валидации...
+
+# Игнорируемые файлы
+ignore:
+  patterns:
+    - "*.lock"
+    - "*.min.js"
+    - "package-lock.json"
+    - "yarn.lock"
+  binary_files: true
+
+# Лимиты
+limits:
+  max_files: null  # null = без лимита
+  max_lines: null
+  max_context_tokens: null
+
+# Комментарии
+comments:
+  mode: both  # inline, summary, both
+  severity_levels: true  # info, warning, error
+  markdown: true
+
+# Retry стратегия
+retry:
+  max_attempts: 3
+  backoff_multiplier: 2
+  initial_delay: 1  # секунды
+```
+
+### Настраиваемые параметры модели (MVP):
+- `temperature` (0.0 - 2.0)
+- `max_tokens` (1 - 100000+)
+- `top_p` (0.0 - 1.0)
+- `model` (название модели)
+
+### Промпты:
+- Дефолтные промпты встроены в код
+- Возможность переопределения через конфиг
+- Поддержка многострочных промптов в YAML
+
+## Последствия
+
+### Положительные:
+- Гибкость настройки без изменения кода
+- Разные настройки для разных проектов
+- Переопределение через CLI для экспериментов
+
+### Отрицательные:
+- Необходимость валидации конфигурации
+- Возможность некорректных настроек

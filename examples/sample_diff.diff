@@ -1,0 +1,9 @@
+--- a/src/main.py
++++ b/src/main.py
+@@ -10,7 +10,7 @@ def process_data(data):
+     result = []
+     for item in data:
+-        if item.value > 0:
++        if item.value >= 0:
+             result.append(item)
+     return result
