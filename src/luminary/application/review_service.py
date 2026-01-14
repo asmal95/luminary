@@ -1,11 +1,14 @@
 """Review service - orchestrates code review process"""
 
 import logging
+import re
 from typing import List, Optional
 
 from luminary.domain.models.comment import Comment, Severity
 from luminary.domain.models.file_change import FileChange
 from luminary.domain.models.review_result import ReviewResult
+from luminary.domain.prompts.review_prompts import ReviewPromptBuilder
+from luminary.domain.validators.comment_validator import CommentValidator
 from luminary.infrastructure.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -14,13 +17,22 @@ logger = logging.getLogger(__name__)
 class ReviewService:
     """Service for reviewing code changes"""
 
-    def __init__(self, llm_provider: LLMProvider):
+    def __init__(
+        self,
+        llm_provider: LLMProvider,
+        validator: Optional[CommentValidator] = None,
+        custom_review_prompt: Optional[str] = None,
+    ):
         """Initialize review service
         
         Args:
             llm_provider: LLM provider instance
+            validator: Optional comment validator (if None, comments are not validated)
+            custom_review_prompt: Custom review prompt template
         """
         self.llm_provider = llm_provider
+        self.validator = validator
+        self.prompt_builder = ReviewPromptBuilder(custom_review_prompt)
 
     def review_file(self, file_change: FileChange) -> ReviewResult:
         """Review a single file change
@@ -35,7 +47,7 @@ class ReviewService:
 
         try:
             # Generate prompt for review
-            prompt = self._generate_review_prompt(file_change)
+            prompt = self.prompt_builder.build(file_change)
 
             # Get LLM response
             logger.debug(f"Calling LLM for file: {file_change.path}")
@@ -43,6 +55,28 @@ class ReviewService:
 
             # Parse response into comments
             comments = self._parse_llm_response(response, file_change.path)
+
+            # Validate comments if validator is provided
+            if self.validator:
+                logger.debug(f"Validating {len(comments)} comments")
+                validated_comments = []
+                for comment in comments:
+                    # Extract code snippet for validation context
+                    code_snippet = self._extract_code_snippet(file_change, comment)
+                    validation_result = self.validator.validate(
+                        comment, file_change, code_snippet
+                    )
+                    if validation_result.valid:
+                        validated_comments.append(comment)
+                    else:
+                        logger.debug(
+                            f"Comment rejected: {validation_result.reason} "
+                            f"(scores: {validation_result.scores})"
+                        )
+                comments = validated_comments
+                logger.info(
+                    f"Validation complete: {len(validated_comments)}/{len(comments)} comments passed"
+                )
 
             # Create review result
             result = ReviewResult(
@@ -64,53 +98,35 @@ class ReviewService:
                 error=str(e),
             )
 
-    def _generate_review_prompt(self, file_change: FileChange) -> str:
-        """Generate prompt for code review
+    def _extract_code_snippet(
+        self, file_change: FileChange, comment: Comment
+    ) -> Optional[str]:
+        """Extract relevant code snippet for comment validation
         
         Args:
-            file_change: File change to review
+            file_change: File change
+            comment: Comment to extract snippet for
             
         Returns:
-            Formatted prompt string
+            Code snippet or None
         """
-        # Build context
-        context_parts = [f"File: {file_change.path}"]
-        context_parts.append(f"Status: {file_change.status}")
+        if not file_change.new_content or not comment.line_number:
+            return None
 
-        # Add file content if available
-        if file_change.new_content:
-            context_parts.append("\n### Current Code:\n")
-            context_parts.append("```")
-            context_parts.append(file_change.new_content)
-            context_parts.append("```")
+        lines = file_change.new_content.split("\n")
+        line_idx = comment.line_number - 1
 
-        # Add changes (hunks)
-        if file_change.hunks:
-            context_parts.append("\n### Changes:\n")
-            for hunk in file_change.hunks:
-                context_parts.append(f"Lines {hunk.new_start}-{hunk.new_start + hunk.new_count - 1}:")
-                for line in hunk.lines:
-                    context_parts.append(line)
+        if 0 <= line_idx < len(lines):
+            # Extract 5 lines before and after
+            start = max(0, line_idx - 5)
+            end = min(len(lines), line_idx + 6)
+            snippet_lines = lines[start:end]
+            return "\n".join(snippet_lines)
 
-        # Build prompt
-        prompt = f"""You are an expert code reviewer. Review the following code changes and provide constructive feedback.
-
-{chr(10).join(context_parts)}
-
-Please provide:
-1. Inline comments for specific lines that need attention
-2. A summary of overall code quality and suggestions
-
-Format your response with:
-- **Line X:** for inline comments
-- **Summary:** for overall feedback
-
-Be constructive and specific in your feedback."""
-
-        return prompt
+        return None
 
     def _parse_llm_response(self, response: str, file_path: str) -> List[Comment]:
-        """Parse LLM response into Comment objects
+        """Parse LLM response into Comment objects with improved parsing
         
         Args:
             response: LLM response text
@@ -124,44 +140,56 @@ Be constructive and specific in your feedback."""
 
         current_comment = None
         current_line = None
+        current_severity = Severity.INFO
 
         for line in lines:
+            original_line = line
             line = line.strip()
 
-            # Check for inline comment (format: **Line X:** or Line X:)
-            if "**Line" in line or line.startswith("Line"):
-                # Extract line number
-                try:
-                    # Try to find line number
-                    parts = line.split(":")
-                    if len(parts) >= 2:
-                        line_part = parts[0]
-                        # Extract number
-                        import re
+            # Check for inline comment with severity
+            # Format: **Line X:** [SEVERITY] comment or **Line X:** comment
+            line_match = re.search(r"\*\*Line\s+(\d+):\*\*", line, re.IGNORECASE)
+            if not line_match:
+                line_match = re.search(r"Line\s+(\d+):", line, re.IGNORECASE)
 
-                        numbers = re.findall(r"\d+", line_part)
-                        if numbers:
-                            current_line = int(numbers[0])
-                            comment_text = ":".join(parts[1:]).strip()
-                            if comment_text:
-                                current_comment = Comment(
-                                    content=comment_text,
-                                    line_number=current_line,
-                                    file_path=file_path,
-                                    severity=Severity.INFO,  # Default, can be improved
-                                )
-                                comments.append(current_comment)
-                except (ValueError, IndexError):
-                    pass
+            if line_match:
+                current_line = int(line_match.group(1))
+
+                # Extract severity if present
+                severity_match = re.search(
+                    r"\[(INFO|WARNING|ERROR)\]", line, re.IGNORECASE
+                )
+                if severity_match:
+                    severity_str = severity_match.group(1).upper()
+                    current_severity = Severity[severity_str]
+                else:
+                    current_severity = Severity.INFO
+
+                # Extract comment text (after Line X: and optional [SEVERITY])
+                comment_text = line
+                # Remove "**Line X:**" or "Line X:"
+                comment_text = re.sub(r"\*\*Line\s+\d+:\*\*", "", comment_text, flags=re.IGNORECASE)
+                comment_text = re.sub(r"Line\s+\d+:", "", comment_text, flags=re.IGNORECASE)
+                # Remove [SEVERITY]
+                comment_text = re.sub(r"\[(INFO|WARNING|ERROR)\]", "", comment_text, flags=re.IGNORECASE)
+                comment_text = comment_text.strip()
+
+                if comment_text:
+                    current_comment = Comment(
+                        content=comment_text,
+                        line_number=current_line,
+                        file_path=file_path,
+                        severity=current_severity,
+                    )
+                    comments.append(current_comment)
+                continue
 
             # Check for summary section
-            elif "**Summary:**" in line or line.startswith("Summary:"):
-                # Skip summary line, it will be extracted separately
+            if "**Summary:**" in line or line.strip().startswith("Summary:"):
                 continue
 
             # Continue building current comment
-            elif current_comment and line:
-                # Append to current comment
+            if current_comment and line:
                 if current_comment.content:
                     current_comment.content += "\n" + line
                 else:
