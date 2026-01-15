@@ -1,13 +1,15 @@
 """Review service - orchestrates code review process"""
 
+from __future__ import annotations
+
 import logging
 import re
-from typing import List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 from luminary.domain.models.comment import Comment, Severity
 from luminary.domain.models.file_change import FileChange
 from luminary.domain.models.review_result import ReviewResult
-from luminary.domain.prompts.review_prompts import ReviewPromptBuilder
+from luminary.domain.prompts.review_prompts import ReviewPromptBuilder, ReviewPromptOptions
 from luminary.domain.validators.comment_validator import CommentValidator
 from luminary.infrastructure.llm.base import LLMProvider
 
@@ -22,6 +24,11 @@ class ReviewService:
         llm_provider: LLMProvider,
         validator: Optional[CommentValidator] = None,
         custom_review_prompt: Optional[str] = None,
+        comment_mode: str = "both",
+        max_context_tokens: Optional[int] = None,
+        chunk_overlap_lines: int = 200,
+        language: Optional[str] = None,
+        framework: Optional[str] = None,
     ):
         """Initialize review service
         
@@ -33,6 +40,11 @@ class ReviewService:
         self.llm_provider = llm_provider
         self.validator = validator
         self.prompt_builder = ReviewPromptBuilder(custom_review_prompt)
+        self.comment_mode = comment_mode
+        self.max_context_tokens = max_context_tokens
+        self.chunk_overlap_lines = chunk_overlap_lines
+        self.language = language
+        self.framework = framework
 
     def review_file(self, file_change: FileChange) -> ReviewResult:
         """Review a single file change
@@ -46,19 +58,57 @@ class ReviewService:
         logger.info(f"Reviewing file: {file_change.path}")
 
         try:
-            # Generate prompt for review
-            prompt = self.prompt_builder.build(file_change)
+            detected_language = self.language or self._detect_language_from_path(file_change.path)
+            responses: List[str] = []
+            # Chunk if configured and file is too large
+            if self._should_chunk(file_change):
+                for chunk_fc, chunk_range in self._iter_file_chunks(file_change):
+                    options = ReviewPromptOptions(
+                        comment_mode=self.comment_mode,
+                        language=detected_language,
+                        framework=self.framework,
+                        line_number_offset=chunk_range[0] - 1,
+                    )
+                    logger.debug(
+                        f"Calling LLM for file chunk {file_change.path} "
+                        f"(lines {chunk_range[0]}-{chunk_range[1]})"
+                    )
+                    prompt = self.prompt_builder.build(chunk_fc, options=options)
+                    responses.append(self.llm_provider.generate(prompt))
+            else:
+                options = ReviewPromptOptions(
+                    comment_mode=self.comment_mode,
+                    language=detected_language,
+                    framework=self.framework,
+                    line_number_offset=0,
+                )
+                prompt = self.prompt_builder.build(file_change, options=options)
+                logger.debug(f"Calling LLM for file: {file_change.path}")
+                responses.append(self.llm_provider.generate(prompt))
 
-            # Get LLM response
-            logger.debug(f"Calling LLM for file: {file_change.path}")
-            response = self.llm_provider.generate(prompt)
+            # Parse and aggregate
+            comments: List[Comment] = []
+            summaries: List[str] = []
+            for response in responses:
+                comments.extend(self._parse_llm_response(response, file_change.path))
+                summary = self._extract_summary(response)
+                if summary:
+                    summaries.append(summary)
 
-            # Parse response into comments
-            comments = self._parse_llm_response(response, file_change.path)
+            comments = self._dedupe_comments(comments)
+            summary_text = self._aggregate_summaries(summaries)
+
+            # Apply comment mode post-processing (defensive, even though prompt requests it)
+            if self.comment_mode == "summary":
+                comments = []
+            elif self.comment_mode == "inline":
+                comments = [c for c in comments if c.is_inline]
+                summary_text = None
 
             # Validate comments if validator is provided
             if self.validator:
-                logger.debug(f"Validating {len(comments)} comments")
+                original_count = len(comments)
+                logger.debug(f"Validating {original_count} comments")
                 validated_comments = []
                 for comment in comments:
                     # Extract code snippet for validation context
@@ -75,14 +125,14 @@ class ReviewService:
                         )
                 comments = validated_comments
                 logger.info(
-                    f"Validation complete: {len(validated_comments)}/{len(comments)} comments passed"
+                    f"Validation complete: {len(validated_comments)}/{original_count} comments passed"
                 )
 
             # Create review result
             result = ReviewResult(
                 file_change=file_change,
                 comments=comments,
-                summary=self._extract_summary(response),
+                summary=summary_text,
             )
 
             logger.info(
@@ -97,6 +147,144 @@ class ReviewService:
                 file_change=file_change,
                 error=str(e),
             )
+
+    def _detect_language_from_path(self, path: str) -> Optional[str]:
+        ext = (path.rsplit(".", 1)[-1] if "." in path else "").lower()
+        mapping = {
+            "py": "Python",
+            "js": "JavaScript",
+            "ts": "TypeScript",
+            "tsx": "TypeScript/React",
+            "jsx": "JavaScript/React",
+            "java": "Java",
+            "kt": "Kotlin",
+            "go": "Go",
+            "rs": "Rust",
+            "cs": "C#",
+            "cpp": "C++",
+            "c": "C",
+            "h": "C/C++ Header",
+            "hpp": "C++ Header",
+            "php": "PHP",
+            "rb": "Ruby",
+            "swift": "Swift",
+            "scala": "Scala",
+            "sql": "SQL",
+            "yaml": "YAML",
+            "yml": "YAML",
+            "json": "JSON",
+            "md": "Markdown",
+        }
+        return mapping.get(ext)
+
+    def _estimate_tokens(self, text: str) -> int:
+        # Very rough heuristic: ~4 chars per token on average for code-ish text.
+        return max(1, len(text) // 4)
+
+    def _should_chunk(self, file_change: FileChange) -> bool:
+        if not self.max_context_tokens:
+            return False
+        if not file_change.new_content:
+            return False
+        return self._estimate_tokens(file_change.new_content) > self.max_context_tokens
+
+    def _iter_file_chunks(self, file_change: FileChange) -> Iterable[Tuple[FileChange, Tuple[int, int]]]:
+        """Yield FileChange objects for chunks of file_change.new_content.
+
+        Chunking is line-based with overlap; we also filter hunks to those intersecting the chunk.
+        """
+        assert file_change.new_content is not None
+        lines = file_change.new_content.split("\n")
+
+        # Reserve some budget for prompt overhead and diff context; keep code chunk smaller.
+        token_budget = int(self.max_context_tokens * 0.7) if self.max_context_tokens else 0
+        if token_budget <= 0:
+            token_budget = 2000
+
+        # Precompute per-line token estimate
+        line_tokens = [self._estimate_tokens(line + "\n") for line in lines]
+
+        start_idx = 0
+        while start_idx < len(lines):
+            used = 0
+            end_idx = start_idx
+            while end_idx < len(lines) and used + line_tokens[end_idx] <= token_budget:
+                used += line_tokens[end_idx]
+                end_idx += 1
+
+            # Ensure progress
+            if end_idx == start_idx:
+                end_idx = min(len(lines), start_idx + 50)
+
+            chunk_start_line = start_idx + 1
+            chunk_end_line = end_idx
+            chunk_text = "\n".join(lines[start_idx:end_idx])
+
+            chunk_hunks = self._filter_hunks_for_range(file_change, chunk_start_line, chunk_end_line)
+
+            chunk_fc = FileChange(
+                path=file_change.path,
+                old_path=file_change.old_path,
+                status=file_change.status,
+                hunks=chunk_hunks,
+                old_content=file_change.old_content,
+                new_content=chunk_text,
+            )
+
+            yield chunk_fc, (chunk_start_line, chunk_end_line)
+
+            # Next chunk with overlap
+            overlap = max(0, self.chunk_overlap_lines)
+            next_start = end_idx - overlap if overlap > 0 else end_idx
+            # Ensure progress even if overlap is larger than the produced chunk
+            start_idx = max(next_start, start_idx + 1)
+
+            if start_idx >= len(lines):
+                break
+
+    def _filter_hunks_for_range(
+        self, file_change: FileChange, start_line: int, end_line: int
+    ) -> List:
+        if not file_change.hunks:
+            return []
+        filtered = []
+        for hunk in file_change.hunks:
+            hunk_start = hunk.new_start
+            hunk_end = hunk.new_start + max(0, hunk.new_count) - 1
+            # If range overlaps
+            if hunk_end >= start_line and hunk_start <= end_line:
+                filtered.append(hunk)
+        return filtered
+
+    def _dedupe_comments(self, comments: List[Comment]) -> List[Comment]:
+        seen = set()
+        out: List[Comment] = []
+        for c in comments:
+            key = (
+                c.file_path,
+                c.line_number,
+                c.line_range,
+                c.severity,
+                re.sub(r"\s+", " ", (c.content or "").strip().lower()),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(c)
+        return out
+
+    def _aggregate_summaries(self, summaries: List[str]) -> Optional[str]:
+        if not summaries:
+            return None
+        if len(summaries) == 1:
+            return summaries[0]
+        # Keep it readable for MR summary aggregation downstream
+        lines = []
+        for i, s in enumerate(summaries, 1):
+            lines.append(f"Chunk {i} summary:")
+            lines.append(s)
+            lines.append("")
+        return "\n".join(lines).strip()
 
     def _extract_code_snippet(
         self, file_change: FileChange, comment: Comment

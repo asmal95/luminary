@@ -7,36 +7,51 @@
 .venv\Scripts\Activate.ps1
 
 # Или установить зависимости заново
-pip install -e .
+python -m pip install -e .
 ```
 
 ## Запуск
 
 ### Базовый запуск (mock провайдер)
 ```bash
-luminary examples/sample_code.py
+luminary file examples/sample_code.py
 ```
 
 ### С выбором провайдера
 ```bash
 # Mock (для тестирования)
-luminary examples/sample_code.py --provider mock
+luminary file examples/sample_code.py --provider mock
 
 # OpenRouter (нужен API ключ)
 export OPENROUTER_API_KEY=your_key
-luminary examples/sample_code.py --provider openrouter
+luminary file examples/sample_code.py --provider openrouter
+
+# OpenAI
+export OPENAI_API_KEY=your_key
+luminary file examples/sample_code.py --provider openai
+
+# DeepSeek
+export DEEPSEEK_API_KEY=your_key
+luminary file examples/sample_code.py --provider deepseek
+
+# vLLM (локальный сервер)
+set VLLM_API_URL=http://localhost:8000/v1/chat/completions
+luminary file examples/sample_code.py --provider vllm
 ```
 
 ### С опциями
 ```bash
 # Подробное логирование
-luminary examples/sample_code.py --verbose
+luminary file examples/sample_code.py --verbose
 
 # Отключить валидацию
-luminary examples/sample_code.py --no-validate
+luminary file examples/sample_code.py --no-validate
+
+# Режим комментариев
+luminary file examples/sample_code.py --comments-mode inline
 
 # Указать конфиг файл
-luminary examples/sample_code.py --config .ai-reviewer.yml
+luminary file examples/sample_code.py --config .ai-reviewer.yml
 ```
 
 ## Тесты
@@ -58,13 +73,21 @@ pytest tests/test_mock_provider.py::test_mock_provider_basic
 
 ```yaml
 llm:
-  provider: mock  # или openrouter
+  provider: mock  # mock | openrouter | openai | deepseek | vllm
   model: anthropic/claude-3.5-sonnet
   temperature: 0.7
 
 validator:
   enabled: false
   threshold: 0.7
+
+comments:
+  mode: both  # inline | summary | both
+
+retry:
+  max_attempts: 3
+  initial_delay: 1
+  backoff_multiplier: 2
 ```
 
 ## Проверка компонентов

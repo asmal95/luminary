@@ -25,6 +25,7 @@ class MRReviewService:
         review_service: Optional[ReviewService] = None,
         max_files: Optional[int] = None,
         max_lines: Optional[int] = None,
+        comment_mode: str = "both",
     ):
         """Initialize MR review service
         
@@ -42,6 +43,7 @@ class MRReviewService:
         self.review_service = review_service or ReviewService(llm_provider)
         self.max_files = max_files
         self.max_lines = max_lines
+        self.comment_mode = comment_mode
 
     def review_merge_request(
         self, project_id: str, merge_request_iid: int, post_comments: bool = True
@@ -112,7 +114,7 @@ class MRReviewService:
                 results.append(result)
 
                 # Post comments to GitLab
-                if post_comments and result.has_comments:
+                if post_comments and result.has_comments and self.comment_mode in ("inline", "both"):
                     posted, failed = self._post_comments_to_gitlab(
                         project_id, merge_request_iid, result
                     )
@@ -125,8 +127,8 @@ class MRReviewService:
                 )
                 continue
 
-        # Post summary comment if there are results
-        if post_comments and results:
+        # Post summary comment if there are results and mode allows it
+        if post_comments and results and self.comment_mode in ("summary", "both"):
             self._post_summary_comment(project_id, merge_request_iid, results)
 
         # Statistics
@@ -159,7 +161,8 @@ class MRReviewService:
         posted = 0
         failed = 0
 
-        for comment in result.comments:
+        # Only post inline comments here; summary is posted separately.
+        for comment in result.inline_comments:
             try:
                 success = self.gitlab_client.post_comment(
                     project_id=project_id,

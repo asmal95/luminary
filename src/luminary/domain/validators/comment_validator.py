@@ -62,6 +62,8 @@ class CommentValidator:
             "valid": 0,
             "invalid": 0,
             "errors": 0,
+            "score_sums": {"relevance": 0.0, "usefulness": 0.0, "non_redundancy": 0.0},
+            "score_count": 0,
         }
 
     def validate(
@@ -99,6 +101,17 @@ class CommentValidator:
                     f"Comment rejected: {result.reason} "
                     f"(scores: {result.scores})"
                 )
+
+            # Update score aggregates when present
+            try:
+                scores = result.scores or {}
+                for k in ("relevance", "usefulness", "non_redundancy"):
+                    if isinstance(scores.get(k), (int, float)):
+                        self.stats["score_sums"][k] += float(scores[k])
+                self.stats["score_count"] += 1
+            except Exception:
+                # Don't fail validation due to stats aggregation
+                pass
 
             return result
 
@@ -184,4 +197,13 @@ class CommentValidator:
         Returns:
             Dictionary with validation statistics
         """
-        return self.stats.copy()
+        stats = self.stats.copy()
+        count = stats.get("score_count", 0) or 0
+        if count > 0:
+            sums = stats.get("score_sums", {})
+            stats["score_avgs"] = {
+                "relevance": sums.get("relevance", 0.0) / count,
+                "usefulness": sums.get("usefulness", 0.0) / count,
+                "non_redundancy": sums.get("non_redundancy", 0.0) / count,
+            }
+        return stats

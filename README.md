@@ -6,7 +6,7 @@
 
 Развитие от инструмента для автоматического ревью кода до полноценного AI-агента, способного не только находить проблемы, но и предлагать улучшения, объяснять решения и обучаться на основе обратной связи.
 
-**Текущая фаза:** MVP разработка - Этап 1 ✅
+**Текущая фаза:** MVP разработка - Этап 4 ✅
 
 ## 📋 Возможности (MVP)
 
@@ -24,29 +24,69 @@
 
 ### Установка
 
-Проект использует [uv](https://github.com/astral-sh/uv) для управления зависимостями.
+Проект поддерживает установку через `pip` (удобно для Windows) и через [uv](https://github.com/astral-sh/uv).
 
 ```bash
-# Установка uv (если еще не установлен)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Установка зависимостей
-uv sync
-
-# Активация виртуального окружения
-source .venv/bin/activate  # Linux/Mac
-# или
-.venv\Scripts\activate  # Windows
+# Установка (pip, editable)
+python -m pip install -e .
 ```
 
-### Использование (Этап 1 - прототип)
+### Использование
 
 ```bash
-# Анализ одного файла
-uv run luminary path/to/file.py
+# Анализ одного файла (mock по умолчанию)
+luminary file path/to/file.py
 
-# С подробным логированием
-uv run luminary path/to/file.py --verbose
+# Явный выбор провайдера
+luminary file path/to/file.py --provider openrouter
+
+# Режим комментариев
+luminary file path/to/file.py --comments-mode inline
+
+# Ревью MR (GitLab)
+luminary mr group/project 123 --no-post
+```
+
+### LLM провайдеры и переменные окружения
+
+- **openrouter**: `OPENROUTER_API_KEY`
+- **openai**: `OPENAI_API_KEY`
+- **deepseek**: `DEEPSEEK_API_KEY`
+- **vllm** (локальный OpenAI-compatible сервер): `VLLM_API_URL` (опционально), `VLLM_API_KEY` (опционально)
+
+### Конфигурация (пример `.ai-reviewer.yml`)
+
+```yaml
+llm:
+  provider: openrouter  # mock | openrouter | openai | deepseek | vllm
+  model: anthropic/claude-3.5-sonnet
+  temperature: 0.7
+  max_tokens: 2000
+  top_p: 0.9
+
+validator:
+  enabled: true
+  provider: openrouter
+  model: anthropic/claude-3-haiku
+  threshold: 0.7
+
+comments:
+  mode: both  # inline | summary | both
+
+limits:
+  max_context_tokens: 8000
+  chunk_overlap_size: 200
+
+retry:
+  max_attempts: 3
+  initial_delay: 1
+  backoff_multiplier: 2
+
+prompts:
+  review: |
+    ... custom review prompt ...
+  validation: |
+    ... custom validation prompt ...
 ```
 
 ## 🏗️ Архитектура
@@ -89,13 +129,13 @@ luminary/
 ### Установка зависимостей для разработки
 
 ```bash
-uv sync --dev
+python -m pip install -e ".[dev]"
 ```
 
 ### Запуск тестов
 
 ```bash
-uv run pytest
+python -m pytest
 ```
 
 ### Форматирование кода

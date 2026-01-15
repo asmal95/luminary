@@ -1,5 +1,6 @@
 """Configuration manager for loading and validating .ai-reviewer.yml"""
 
+import copy
 import logging
 import os
 from pathlib import Path
@@ -46,11 +47,16 @@ class ConfigManager:
             "max_files": None,
             "max_lines": None,
             "max_context_tokens": None,
+            "chunk_overlap_size": 200,  # lines, used when chunking
         },
         "comments": {
             "mode": "both",  # inline, summary, both
             "severity_levels": True,
             "markdown": True,
+        },
+        "prompts": {
+            "review": None,  # optional string template override
+            "validation": None,  # optional string template override
         },
         "retry": {
             "max_attempts": 3,
@@ -89,7 +95,7 @@ class ConfigManager:
         Returns:
             Merged configuration dictionary
         """
-        config = self.DEFAULT_CONFIG.copy()
+        config = copy.deepcopy(self.DEFAULT_CONFIG)
 
         if self.config_path and self.config_path.exists():
             try:
@@ -183,6 +189,18 @@ class ConfigManager:
             Retry configuration dictionary
         """
         return self.config.get("retry", {}).copy()
+
+    def get_limits_config(self) -> Dict[str, Any]:
+        """Get limits configuration."""
+        return self.config.get("limits", {}).copy()
+
+    def get_comments_config(self) -> Dict[str, Any]:
+        """Get comments configuration."""
+        return self.config.get("comments", {}).copy()
+
+    def get_prompts_config(self) -> Dict[str, Any]:
+        """Get prompts configuration."""
+        return self.config.get("prompts", {}).copy()
 
     def get_gitlab_config(self) -> Dict[str, Any]:
         """Get GitLab configuration

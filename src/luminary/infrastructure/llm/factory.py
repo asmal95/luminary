@@ -4,8 +4,11 @@ import logging
 from typing import Any, Dict
 
 from luminary.infrastructure.llm.base import LLMProvider
+from luminary.infrastructure.llm.deepseek import DeepSeekProvider
 from luminary.infrastructure.llm.mock import MockLLMProvider
+from luminary.infrastructure.llm.openai import OpenAIProvider
 from luminary.infrastructure.llm.openrouter import OpenRouterProvider
+from luminary.infrastructure.llm.vllm import VLLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +19,9 @@ class LLMProviderFactory:
     PROVIDERS = {
         "mock": MockLLMProvider,
         "openrouter": OpenRouterProvider,
+        "openai": OpenAIProvider,
+        "deepseek": DeepSeekProvider,
+        "vllm": VLLMProvider,
     }
 
     @classmethod

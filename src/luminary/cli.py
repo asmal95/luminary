@@ -77,7 +77,12 @@ def cli(ctx, verbose: bool, config: Path):
 @click.option(
     "--provider",
     type=str,
-    help="LLM provider to use (mock, openrouter). Overrides config.",
+    help="LLM provider to use (mock, openrouter, openai, deepseek, vllm). Overrides config.",
+)
+@click.option(
+    "--comments-mode",
+    type=click.Choice(["inline", "summary", "both"], case_sensitive=False),
+    help="Comment mode: inline, summary, both. Overrides config.",
 )
 @click.option(
     "--no-validate",
@@ -85,7 +90,7 @@ def cli(ctx, verbose: bool, config: Path):
     help="Disable comment validation",
 )
 @click.pass_context
-def file(ctx, file_path: Path, provider: str, no_validate: bool):
+def file(ctx, file_path: Path, provider: str, comments_mode: str, no_validate: bool):
     """Review a single file using AI.
     
     FILE_PATH: Path to the file or diff to review
@@ -97,6 +102,9 @@ def file(ctx, file_path: Path, provider: str, no_validate: bool):
         config_manager = ConfigManager(config_path=ctx.obj.get("config_path"))
         llm_config = config_manager.get_llm_config()
         validator_config = config_manager.get_validator_config()
+        comments_config = config_manager.get_comments_config()
+        limits_config = config_manager.get_limits_config()
+        prompts_config = config_manager.get_prompts_config()
 
         # Override provider from CLI if specified
         provider_type = provider or llm_config.get("provider", "mock")
@@ -128,14 +136,26 @@ def file(ctx, file_path: Path, provider: str, no_validate: bool):
             validator_llm = LLMProviderFactory.create(
                 validator_provider_type, validator_provider_config
             )
-            validator = CommentValidator(validator_llm, threshold=validator_threshold)
+            validator = CommentValidator(
+                validator_llm,
+                threshold=validator_threshold,
+                custom_prompt=prompts_config.get("validation"),
+            )
             logger.info("Comment validation enabled")
 
         # Parse file/diff
         file_change = parse_file_or_diff(file_path)
 
         # Create review service
-        review_service = ReviewService(llm_provider, validator=validator)
+        mode = (comments_mode or comments_config.get("mode", "both")).lower()
+        review_service = ReviewService(
+            llm_provider,
+            validator=validator,
+            custom_review_prompt=prompts_config.get("review"),
+            comment_mode=mode,
+            max_context_tokens=limits_config.get("max_context_tokens"),
+            chunk_overlap_lines=limits_config.get("chunk_overlap_size", 200),
+        )
 
         # Review file
         result = review_service.review_file(file_change)
@@ -178,7 +198,12 @@ def file(ctx, file_path: Path, provider: str, no_validate: bool):
 @click.option(
     "--provider",
     type=str,
-    help="LLM provider to use (mock, openrouter). Overrides config.",
+    help="LLM provider to use (mock, openrouter, openai, deepseek, vllm). Overrides config.",
+)
+@click.option(
+    "--comments-mode",
+    type=click.Choice(["inline", "summary", "both"], case_sensitive=False),
+    help="Comment mode: inline, summary, both. Overrides config.",
 )
 @click.option(
     "--no-validate",
@@ -201,6 +226,7 @@ def mr(
     project_id: str,
     merge_request_iid: int,
     provider: str,
+    comments_mode: str,
     no_validate: bool,
     no_post: bool,
     gitlab_url: str,
@@ -218,6 +244,9 @@ def mr(
         llm_config = config_manager.get_llm_config()
         validator_config = config_manager.get_validator_config()
         ignore_config = config_manager.config.get("ignore", {})
+        comments_config = config_manager.get_comments_config()
+        limits_config = config_manager.get_limits_config()
+        prompts_config = config_manager.get_prompts_config()
 
         # Override provider from CLI if specified
         provider_type = provider or llm_config.get("provider", "mock")
@@ -249,7 +278,11 @@ def mr(
             validator_llm = LLMProviderFactory.create(
                 validator_provider_type, validator_provider_config
             )
-            validator = CommentValidator(validator_llm, threshold=validator_threshold)
+            validator = CommentValidator(
+                validator_llm,
+                threshold=validator_threshold,
+                custom_prompt=prompts_config.get("validation"),
+            )
             logger.info("Comment validation enabled")
 
         # Create GitLab client
@@ -266,10 +299,17 @@ def mr(
         )
 
         # Create review service
-        review_service = ReviewService(llm_provider, validator=validator)
+        mode = (comments_mode or comments_config.get("mode", "both")).lower()
+        review_service = ReviewService(
+            llm_provider,
+            validator=validator,
+            custom_review_prompt=prompts_config.get("review"),
+            comment_mode=mode,
+            max_context_tokens=limits_config.get("max_context_tokens"),
+            chunk_overlap_lines=limits_config.get("chunk_overlap_size", 200),
+        )
 
         # Create MR review service
-        limits_config = config_manager.config.get("limits", {})
         mr_review_service = MRReviewService(
             llm_provider=llm_provider,
             gitlab_client=gitlab_client,
@@ -277,6 +317,7 @@ def mr(
             review_service=review_service,
             max_files=limits_config.get("max_files"),
             max_lines=limits_config.get("max_lines"),
+            comment_mode=mode,
         )
 
         # Review MR
