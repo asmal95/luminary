@@ -100,6 +100,24 @@ python -c "from luminary.infrastructure.llm.factory import LLMProviderFactory; p
 python -c "from luminary.infrastructure.config.config_manager import ConfigManager; cm = ConfigManager(); print(cm.get('llm.provider'))"
 ```
 
+## Docker
+
+Сборка образа:
+```bash
+docker build -t luminary:local .
+```
+
+Запуск:
+```bash
+docker run --rm -v "%cd%:/work" -w /work luminary:local file examples/sample_code.py --provider mock
+```
+
+## GitLab CI
+
+В репозитории есть `.gitlab-ci.yml` который автоматически собирает Docker образ и использует его для ревью MR.
+
+См. [README.md](README.md) для подробностей по настройке CI/CD переменных.
+
 ## Help
 
 ```bash
