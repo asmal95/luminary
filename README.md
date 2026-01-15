@@ -115,12 +115,23 @@ docker run --rm ^
 ## 🤖 GitLab CI
 
 В репозитории есть пример `.gitlab-ci.yml`, который:
+- **собирает Docker образ Luminary** и пушит в GitLab Container Registry
 - запускает тесты
-- запускает `luminary mr ...` в MR pipeline (при наличии `CI_MERGE_REQUEST_IID`)
+- **использует собственный Docker образ** для запуска `luminary mr ...` в MR pipeline
 
-Секреты рекомендуется хранить как GitLab CI variables:
-- `GITLAB_TOKEN`
-- `OPENROUTER_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY`
+### Pipeline stages:
+
+1. **`build`** - собирает Docker образ Luminary и пушит в `$CI_REGISTRY_IMAGE:latest`
+2. **`test`** - запускает pytest
+3. **`ai_review`** - использует образ Luminary из Container Registry для ревью MR
+
+### Настройка секретов:
+
+Секреты рекомендуется хранить как GitLab CI/CD variables (Settings → CI/CD → Variables):
+- `GITLAB_TOKEN` - токен для доступа к GitLab API
+- `OPENROUTER_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` - ключ LLM провайдера
+
+**Важно:** Для сборки Docker образа нужен доступ к GitLab Container Registry (обычно включен по умолчанию).
 
 ## 🏗️ Архитектура
 

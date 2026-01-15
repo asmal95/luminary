@@ -1,4 +1,5 @@
 stages:
+  - build
   - test
   - ai_review
 
@@ -6,6 +7,31 @@ variables:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   PYTHONDONTWRITEBYTECODE: "1"
   PYTHONUNBUFFERED: "1"
+  DOCKER_DRIVER: overlay2
+
+build_docker_image:
+  stage: build
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    # Build Luminary Docker image
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG -t $CI_REGISTRY_IMAGE:latest -f Dockerfile .
+    # Push to GitLab Container Registry
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+    - docker push $CI_REGISTRY_IMAGE:latest
+  rules:
+    # Build on every commit to default branch, or when code changes
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH
+      changes:
+        - Dockerfile
+        - pyproject.toml
+        - "src/**/*"
+    # Also build for MRs if image doesn't exist yet
+    - if: $CI_MERGE_REQUEST_IID
 
 pytest:
   stage: test
@@ -18,9 +44,12 @@ pytest:
 
 ai_review_mr:
   stage: ai_review
-  image: python:3.11-slim
+  # Use our own Luminary Docker image from Container Registry
+  image: $CI_REGISTRY_IMAGE:latest
+  needs:
+    - job: build_docker_image
+      artifacts: false
   script:
-    - python -m pip install -e .
     # Run review for merge request pipelines only.
     # Requires secret variables:
     # - GITLAB_TOKEN (to post comments)
@@ -30,6 +59,7 @@ ai_review_mr:
         echo "Not a merge request pipeline; skipping AI review."
         exit 0
       fi
+    # luminary is already installed in the Docker image
     - luminary mr "${CI_PROJECT_PATH}" "${CI_MERGE_REQUEST_IID}" --provider openrouter
   rules:
     - if: $CI_MERGE_REQUEST_IID
