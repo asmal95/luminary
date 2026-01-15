@@ -1,0 +1,37 @@
+stages:
+  - test
+  - ai_review
+
+variables:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+pytest:
+  stage: test
+  image: python:3.11-slim
+  script:
+    - python -m pip install -e ".[dev]"
+    - python -m pytest -q
+  rules:
+    - when: always
+
+ai_review_mr:
+  stage: ai_review
+  image: python:3.11-slim
+  script:
+    - python -m pip install -e .
+    # Run review for merge request pipelines only.
+    # Requires secret variables:
+    # - GITLAB_TOKEN (to post comments)
+    # - One of: OPENROUTER_API_KEY / OPENAI_API_KEY / DEEPSEEK_API_KEY
+    - |
+      if [ -z "${CI_MERGE_REQUEST_IID}" ]; then
+        echo "Not a merge request pipeline; skipping AI review."
+        exit 0
+      fi
+    - luminary mr "${CI_PROJECT_PATH}" "${CI_MERGE_REQUEST_IID}" --provider openrouter
+  rules:
+    - if: $CI_MERGE_REQUEST_IID
+      when: on_success
+    - when: never

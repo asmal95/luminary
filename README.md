@@ -89,6 +89,39 @@ prompts:
     ... custom validation prompt ...
 ```
 
+## 🐳 Docker
+
+Сборка образа:
+
+```bash
+docker build -t luminary:local .
+```
+
+Пример запуска (ревью файла):
+
+```bash
+docker run --rm -v "%cd%:/work" -w /work luminary:local file examples/sample_code.py --provider mock
+```
+
+Пример запуска (ревью MR):
+
+```bash
+docker run --rm ^
+  -e GITLAB_TOKEN=... ^
+  -e OPENROUTER_API_KEY=... ^
+  luminary:local mr group/project 123
+```
+
+## 🤖 GitLab CI
+
+В репозитории есть пример `.gitlab-ci.yml`, который:
+- запускает тесты
+- запускает `luminary mr ...` в MR pipeline (при наличии `CI_MERGE_REQUEST_IID`)
+
+Секреты рекомендуется хранить как GitLab CI variables:
+- `GITLAB_TOKEN`
+- `OPENROUTER_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY`
+
 ## 🏗️ Архитектура
 
 Проект использует многослойную архитектуру:

@@ -27,6 +27,15 @@ def setup_logging(verbose: bool = False):
     )
 
 
+def _die(logger: logging.Logger, message: str, verbose: bool, exc: Exception | None = None) -> None:
+    """Exit with a user-friendly error message; include stack trace only in verbose logs."""
+    if exc is not None:
+        logger.error(message, exc_info=verbose)
+    else:
+        logger.error(message)
+    raise click.ClickException(message)
+
+
 def parse_file_or_diff(file_path: Path) -> FileChange:
     """Parse a file or diff into FileChange object
     
@@ -120,7 +129,10 @@ def file(ctx, file_path: Path, provider: str, comments_mode: str, no_validate: b
         retry_config = config_manager.get_retry_config()
         provider_config.update(retry_config)
 
-        llm_provider = LLMProviderFactory.create(provider_type, provider_config)
+        try:
+            llm_provider = LLMProviderFactory.create(provider_type, provider_config)
+        except ValueError as e:
+            _die(logger, str(e), verbose=ctx.obj.get("verbose", False), exc=e)
 
         # Create validator if enabled
         validator = None
@@ -133,9 +145,12 @@ def file(ctx, file_path: Path, provider: str, comments_mode: str, no_validate: b
             if validator_model:
                 validator_provider_config["model"] = validator_model
 
-            validator_llm = LLMProviderFactory.create(
-                validator_provider_type, validator_provider_config
-            )
+            try:
+                validator_llm = LLMProviderFactory.create(
+                    validator_provider_type, validator_provider_config
+                )
+            except ValueError as e:
+                _die(logger, str(e), verbose=ctx.obj.get("verbose", False), exc=e)
             validator = CommentValidator(
                 validator_llm,
                 threshold=validator_threshold,
@@ -186,10 +201,10 @@ def file(ctx, file_path: Path, provider: str, comments_mode: str, no_validate: b
 
         click.echo(f"\nReview completed: {len(result.comments)} comments generated")
 
+    except click.ClickException:
+        raise
     except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
-        click.echo(f"Fatal error: {e}", err=True)
-        sys.exit(1)
+        _die(logger, f"Fatal error: {e}", verbose=ctx.obj.get("verbose", False), exc=e)
 
 
 @cli.command()
@@ -262,7 +277,10 @@ def mr(
         retry_config = config_manager.get_retry_config()
         provider_config.update(retry_config)
 
-        llm_provider = LLMProviderFactory.create(provider_type, provider_config)
+        try:
+            llm_provider = LLMProviderFactory.create(provider_type, provider_config)
+        except ValueError as e:
+            _die(logger, str(e), verbose=ctx.obj.get("verbose", False), exc=e)
 
         # Create validator if enabled
         validator = None
@@ -275,9 +293,12 @@ def mr(
             if validator_model:
                 validator_provider_config["model"] = validator_model
 
-            validator_llm = LLMProviderFactory.create(
-                validator_provider_type, validator_provider_config
-            )
+            try:
+                validator_llm = LLMProviderFactory.create(
+                    validator_provider_type, validator_provider_config
+                )
+            except ValueError as e:
+                _die(logger, str(e), verbose=ctx.obj.get("verbose", False), exc=e)
             validator = CommentValidator(
                 validator_llm,
                 threshold=validator_threshold,
@@ -286,11 +307,14 @@ def mr(
             logger.info("Comment validation enabled")
 
         # Create GitLab client
-        gitlab_client = GitLabClient(
-            gitlab_url=gitlab_url,
-            max_retries=retry_config.get("max_attempts", 3),
-            retry_delay=retry_config.get("initial_delay", 1.0),
-        )
+        try:
+            gitlab_client = GitLabClient(
+                gitlab_url=gitlab_url,
+                max_retries=retry_config.get("max_attempts", 3),
+                retry_delay=retry_config.get("initial_delay", 1.0),
+            )
+        except ValueError as e:
+            _die(logger, str(e), verbose=ctx.obj.get("verbose", False), exc=e)
 
         # Create file filter
         file_filter = FileFilter(
@@ -345,10 +369,10 @@ def mr(
 
         click.echo("\nReview completed!")
 
+    except click.ClickException:
+        raise
     except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
-        click.echo(f"Fatal error: {e}", err=True)
-        sys.exit(1)
+        _die(logger, f"Fatal error: {e}", verbose=ctx.obj.get("verbose", False), exc=e)
 
 
 def main():
