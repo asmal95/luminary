@@ -1,0 +1,55 @@
+# Пример .ai-reviewer.yml для Java проекта
+# Создайте этот файл в корне вашего Java проекта для кастомизации Luminary
+
+llm:
+  provider: openrouter
+  # Модель для ревью Java кода (можно выбрать другую)
+  model: anthropic/claude-3.5-sonnet
+  temperature: 0.7
+  max_tokens: 2000
+
+validator:
+  enabled: true
+  # Используем ту же модель что и для ревью (можно указать более легкую)
+  provider: openrouter
+  model: anthropic/claude-3-haiku
+  threshold: 0.7
+
+# Игнорируем типичные Java артефакты
+ignore:
+  patterns:
+    - "*.class"
+    - "*.jar"
+    - "*.war"
+    - "*.ear"
+    - "target/**"
+    - "build/**"
+    - ".gradle/**"
+    - ".idea/**"
+    - "*.iml"
+    - ".mvn/**"
+    - "*.lock"
+  binary_files: true
+
+# Лимиты для больших проектов
+limits:
+  max_files: 50  # Максимум файлов для обработки
+  max_lines: 10000  # Максимум строк изменений
+  max_context_tokens: 8000  # Лимит контекста (для chunking больших файлов)
+
+# Режим комментариев
+comments:
+  mode: both  # inline | summary | both
+  severity_levels: true
+  markdown: true
+
+# Retry стратегия для API вызовов
+retry:
+  max_attempts: 3
+  backoff_multiplier: 2
+  initial_delay: 1
+
+# Настройки GitLab (если нужно переопределить)
+# gitlab:
+#   url: https://gitlab.your-company.com  # URL вашего self-hosted GitLab
+#   token: null  # null = из GITLAB_TOKEN env

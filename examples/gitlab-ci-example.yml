@@ -1,0 +1,44 @@
+# Пример .gitlab-ci.yml для использования Luminary в Java проекте
+# 
+# Настройка:
+# 1. Добавьте в GitLab CI/CD Variables (Settings → CI/CD → Variables):
+#    - GITLAB_TOKEN - токен GitLab API (Project Access Token или Personal Access Token)
+#    - OPENROUTER_API_KEY - API ключ от OpenRouter (https://openrouter.ai/)
+#    - GITLAB_URL - URL вашего self-hosted GitLab (если не используется gitlab.com)
+#      Например: https://gitlab.your-company.com
+#
+# 2. Убедитесь что runner имеет доступ к Docker Hub для pull образа
+#
+# 3. При необходимости измените provider/model в команде luminary mr
+
+stages:
+  - ai_review
+
+variables:
+  # Используем образ Luminary из Docker Hub
+  LUMINARY_IMAGE: asmal95/luminary:latest
+  # URL вашего GitLab (если не gitlab.com)
+  # Раскомментируйте и укажите свой хост если нужно:
+  # GITLAB_URL: "https://gitlab.your-company.com"
+
+ai_review:
+  stage: ai_review
+  # Используем готовый Docker образ Luminary из Docker Hub
+  image: $LUMINARY_IMAGE
+  script:
+    # Проверяем что это MR pipeline
+    - |
+      if [ -z "${CI_MERGE_REQUEST_IID}" ]; then
+        echo "Not a merge request pipeline; skipping AI review."
+        exit 0
+      fi
+    # Запускаем ревью MR с OpenRouter провайдером
+    # Провайдер и модель можно изменить через CLI или .ai-reviewer.yml в проекте
+    - luminary mr "${CI_PROJECT_PATH}" "${CI_MERGE_REQUEST_IID}" --provider openrouter
+  rules:
+    # Запускаем только для merge requests
+    - if: $CI_MERGE_REQUEST_IID
+      when: on_success
+    - when: never
+  # Опционально: таймаут для больших MR
+  timeout: 30m

@@ -25,4 +25,4 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 COPY --from=builder /opt/venv /opt/venv
 
-ENTRYPOINT ["luminary"]
+# luminary доступен через PATH, без ENTRYPOINT чтобы можно было использовать shell команды в CI
