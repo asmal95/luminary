@@ -377,7 +377,8 @@ class GitLabClient:
                 return None
             
             # Get the specific line (line_number is 1-based)
-            lines = content.split('\n')
+            # Use splitlines() to handle different line endings (\n, \r\n, \r)
+            lines = content.splitlines()
             if 1 <= line_number <= len(lines):
                 line_content = lines[line_number - 1]
                 # GitLab line_code format: SHA256 hash of the line content
@@ -385,7 +386,7 @@ class GitLabClient:
                 line_code = hashlib.sha256(line_content.encode('utf-8')).hexdigest()
                 return line_code
             else:
-                logger.debug(f"Line {line_number} out of range for {file_path} (file has {len(lines)} lines)")
+                logger.debug(f"Line {line_number} out of range for {file_path} (file has {len(lines)} lines, content: {len(content)} chars)")
         except Exception as e:
             logger.debug(f"Could not calculate line_code for {file_path}:{line_number}: {e}")
         return None
@@ -423,19 +424,24 @@ class GitLabClient:
                 line_code = None
                 if file_content:
                     try:
-                        lines = file_content.split('\n')
+                        # Use splitlines() instead of split('\n') to handle different line endings
+                        # splitlines() handles \n, \r\n, \r correctly
+                        lines = file_content.splitlines()
                         logger.debug(
                             f"Calculating line_code for {file_path}:{line_number} "
-                            f"from file_content ({len(lines)} lines total)"
+                            f"from file_content ({len(lines)} lines total, {len(file_content)} chars)"
                         )
                         if 1 <= line_number <= len(lines):
                             line_content = lines[line_number - 1]
                             line_code = hashlib.sha256(line_content.encode('utf-8')).hexdigest()
                             logger.debug(f"Successfully calculated line_code from file_content: {line_code[:16]}...")
                         else:
+                            # Debug: show first 200 chars of file_content to understand the structure
+                            preview = file_content[:200].replace('\n', '\\n').replace('\r', '\\r')
                             logger.warning(
                                 f"Line {line_number} out of range for {file_path} "
-                                f"(file has {len(lines)} lines, provided content has {len(lines)} lines)"
+                                f"(file has {len(lines)} lines, content length: {len(file_content)} chars). "
+                                f"Content preview: {preview}..."
                             )
                     except Exception as e:
                         logger.warning(f"Could not calculate line_code from provided content: {e}", exc_info=True)
