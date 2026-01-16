@@ -144,35 +144,67 @@ class GitLabClient:
             try:
                 # Get project separately (mr.project may not be available in some GitLab versions)
                 project = self._retry_api_call(lambda: self.gl.projects.get(project_id))
-                # Try to get file content from MR branch
-                file_obj = self._retry_api_call(
-                    lambda: project.files.get(new_path, ref=mr.source_branch)
-                )
-                # Handle different return types from python-gitlab
-                # python-gitlab returns ProjectFile object with decode() method or content attribute
-                if isinstance(file_obj, bytes):
-                    new_content = file_obj.decode('utf-8')
-                elif hasattr(file_obj, 'decode'):
-                    # ProjectFile object with decode method
-                    new_content = file_obj.decode('utf-8')
-                elif hasattr(file_obj, 'content'):
-                    # ProjectFile object with content attribute
-                    file_content = file_obj.content
-                    if isinstance(file_content, bytes):
-                        new_content = file_content.decode('utf-8')
-                    else:
-                        new_content = str(file_content)
-                elif hasattr(file_obj, 'decode_bytes'):
-                    # Some versions use decode_bytes
-                    new_content = file_obj.decode_bytes().decode('utf-8')
-                else:
-                    # Last resort - convert to string
-                    new_content = str(file_obj)
                 
-                if new_content:
-                    logger.debug(f"Successfully fetched content for {new_path} ({len(new_content)} chars)")
+                # Try repository_blob API first (more reliable - returns raw file content)
+                refs_to_try = [
+                    mr.source_branch,  # MR source branch
+                    mr.diff_refs.get("head_sha"),  # Head commit SHA
+                ]
+                
+                for ref in refs_to_try:
+                    if not ref:
+                        continue
+                    try:
+                        # repository_blob returns raw file content (bytes)
+                        blob = self._retry_api_call(
+                            lambda: project.repository_blob(new_path, ref=ref)
+                        )
+                        if blob:
+                            if isinstance(blob, bytes):
+                                new_content = blob.decode('utf-8')
+                            else:
+                                new_content = str(blob)
+                            logger.debug(f"Successfully fetched content via repository_blob for {new_path} ({len(new_content)} chars)")
+                            break
+                    except GitlabError as e:
+                        status_code = e.response_code if hasattr(e, "response_code") else None
+                        if status_code == 404:
+                            logger.debug(f"File {new_path} not found in ref {ref}, trying next ref")
+                        else:
+                            logger.debug(f"repository_blob failed for {new_path}@${ref}: {e}, trying files.get")
+                        continue
+                    except Exception as e:
+                        logger.debug(f"repository_blob exception for {new_path}@${ref}: {e}, trying files.get")
+                        continue
+                
+                # Fallback to files.get API if repository_blob didn't work
+                if not new_content:
+                    try:
+                        file_obj = self._retry_api_call(
+                            lambda: project.files.get(new_path, ref=mr.source_branch)
+                        )
+                        # Handle different return types from python-gitlab
+                        if isinstance(file_obj, bytes):
+                            new_content = file_obj.decode('utf-8')
+                        elif hasattr(file_obj, 'decode'):
+                            new_content = file_obj.decode('utf-8')
+                        elif hasattr(file_obj, 'content'):
+                            file_content = file_obj.content
+                            if isinstance(file_content, bytes):
+                                new_content = file_content.decode('utf-8')
+                            else:
+                                new_content = str(file_content)
+                        elif hasattr(file_obj, 'decode_bytes'):
+                            new_content = file_obj.decode_bytes().decode('utf-8')
+                        else:
+                            new_content = str(file_obj)
+                        
+                        if new_content:
+                            logger.debug(f"Successfully fetched content via files.get for {new_path} ({len(new_content)} chars)")
+                    except Exception as e:
+                        logger.warning(f"Could not fetch content via files.get for {new_path}: {e}")
             except Exception as e:
-                logger.debug(f"Could not fetch content for {new_path}: {e}")
+                logger.warning(f"Could not fetch content for {new_path}: {e}")
 
         return FileChange(
             path=new_path or old_path,
