@@ -150,19 +150,24 @@ class CommentValidator:
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"Failed to parse validation response as JSON: {e}")
             # Fallback: check if response contains "valid: true/false"
-            response_lower = response.lower()
-            if "valid: true" in response_lower or '"valid": true' in response_lower:
+            response_lower = response.strip().lower() if response else ""
+            if not response_lower:
+                # Empty response - assume valid to not lose comments on validator failure
+                logger.warning("Empty validation response, assuming valid")
                 valid = True
-            elif "valid: false" in response_lower or '"valid": false' in response_lower:
+            elif "valid: true" in response_lower or '"valid": true' in response_lower or response_lower.startswith("true"):
+                valid = True
+            elif "valid: false" in response_lower or '"valid": false' in response_lower or response_lower.startswith("false"):
                 valid = False
             else:
-                # Default to invalid if can't parse
-                valid = False
+                # Default to valid if can't parse (better to accept than reject on parsing errors)
+                logger.warning(f"Could not determine validity from response: {response[:100]}, assuming valid")
+                valid = True
 
             return ValidationResult(
                 valid=valid,
-                reason="Could not parse validation response",
-                scores={"relevance": 0.5, "usefulness": 0.5, "non_redundancy": 0.5},
+                reason="Could not parse validation response (using fallback)",
+                scores={"relevance": 0.7, "usefulness": 0.7, "non_redundancy": 0.7},
                 comment=comment,
             )
 

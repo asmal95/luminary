@@ -128,8 +128,9 @@ class MRReviewService:
                 continue
 
         # Post summary comment if there are results and mode allows it
+        summary_posted = False
         if post_comments and results and self.comment_mode in ("summary", "both"):
-            self._post_summary_comment(project_id, merge_request_iid, results)
+            summary_posted = self._post_summary_comment(project_id, merge_request_iid, results)
 
         # Statistics
         stats = {
@@ -138,7 +139,7 @@ class MRReviewService:
             "ignored_files": len(ignored_files),
             "processed_files": len(results),
             "total_comments": sum(len(r.comments) for r in results),
-            "comments_posted": comments_posted,
+            "comments_posted": comments_posted + (1 if summary_posted else 0),
             "comments_failed": comments_failed,
         }
 
@@ -183,13 +184,16 @@ class MRReviewService:
 
     def _post_summary_comment(
         self, project_id: str, merge_request_iid: int, results: List[ReviewResult]
-    ):
+    ) -> bool:
         """Post summary comment to merge request
         
         Args:
             project_id: Project ID
             merge_request_iid: Merge request IID
             results: List of review results
+            
+        Returns:
+            True if summary was posted successfully
         """
         # Build summary
         total_comments = sum(len(r.comments) for r in results)
@@ -214,11 +218,14 @@ class MRReviewService:
         summary_body = "\n".join(summary_lines)
 
         try:
-            self.gitlab_client.post_comment(
+            success = self.gitlab_client.post_comment(
                 project_id=project_id,
                 merge_request_iid=merge_request_iid,
                 body=summary_body,
             )
-            logger.info("Posted summary comment to MR")
+            if success:
+                logger.info("Posted summary comment to MR")
+            return success
         except Exception as e:
             logger.error(f"Failed to post summary comment: {e}")
+            return False

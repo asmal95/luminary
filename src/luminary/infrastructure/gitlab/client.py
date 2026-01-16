@@ -141,11 +141,11 @@ class GitLabClient:
         new_content = None
         if new_path and status != "deleted":
             try:
+                # Get project separately (mr.project may not be available in some GitLab versions)
+                project = self._retry_api_call(lambda: self.gl.projects.get(project_id))
                 # Try to get file content from MR branch
                 file_content = self._retry_api_call(
-                    lambda: mr.project.files.get(
-                        new_path, ref=mr.source_branch
-                    ).decode()
+                    lambda: project.files.get(new_path, ref=mr.source_branch).decode()
                 )
                 new_content = file_content
             except Exception as e:
