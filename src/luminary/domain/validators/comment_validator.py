@@ -181,21 +181,50 @@ class CommentValidator:
                 comment=comment,
             )
         
-        # Strategy 1: Try to extract JSON from markdown code blocks
+        # Strategy 1: Try to extract JSON from markdown code blocks (```json or ```)
         json_str = None
+        # Try ```json ... ``` first
         code_block_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response, re.DOTALL)
         if code_block_match:
             json_str = code_block_match.group(1)
         
-        # Strategy 2: Look for JSON object boundaries
+        # Strategy 2: Find the most complete JSON object in response
+        # Look for all { ... } pairs and pick the one that looks most like our JSON structure
+        if not json_str:
+            # Find all potential JSON objects
+            brace_start = -1
+            brace_depth = 0
+            best_json_start = -1
+            best_json_end = -1
+            
+            for i, char in enumerate(response):
+                if char == '{':
+                    if brace_depth == 0:
+                        brace_start = i
+                    brace_depth += 1
+                elif char == '}':
+                    brace_depth -= 1
+                    if brace_depth == 0 and brace_start >= 0:
+                        # Found a complete JSON object
+                        candidate = response[brace_start:i+1]
+                        # Check if it looks like our validation JSON (has "valid" and "scores")
+                        if '"valid"' in candidate and '"scores"' in candidate:
+                            best_json_start = brace_start
+                            best_json_end = i + 1
+                            break  # Take first complete match
+            
+            if best_json_start >= 0 and best_json_end > best_json_start:
+                json_str = response[best_json_start:best_json_end]
+        
+        # Strategy 3: Fallback - look for first { and last } in response
         if not json_str:
             start = response.find("{")
             end = response.rfind("}") + 1
             if start >= 0 and end > start:
                 json_str = response[start:end]
         
-        # Strategy 3: Try entire response
-        if not json_str:
+        # Strategy 4: Try entire response if it looks like JSON
+        if not json_str and response.strip().startswith("{") and response.strip().endswith("}"):
             json_str = response.strip()
         
         # Try multiple parsing strategies
