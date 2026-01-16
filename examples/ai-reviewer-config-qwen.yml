@@ -1,0 +1,52 @@
+# Пример .ai-reviewer.yml для использования с Qwen моделями
+# Создайте этот файл в корне вашего проекта
+
+llm:
+  provider: openrouter
+  # Qwen модели хороши для code review, но имеют проблемы с JSON форматированием
+  model: qwen/qwen2.5-coder-7b-instruct
+  temperature: 0.7
+  max_tokens: 2000
+
+validator:
+  # ВАЖНО: Отключаем валидацию для Qwen моделей
+  # Qwen модели часто возвращают код вместо JSON, что вызывает ошибки парсинга
+  enabled: false
+  # Если хотите использовать валидацию, используйте другую модель:
+  # enabled: true
+  # provider: openrouter
+  # model: anthropic/claude-3-haiku
+  # threshold: 0.7
+
+# Игнорируем стандартные артефакты
+ignore:
+  patterns:
+    - "*.class"
+    - "*.jar"
+    - "*.war"
+    - "target/**"
+    - "build/**"
+    - ".gradle/**"
+    - ".idea/**"
+    - "node_modules/**"
+    - "dist/**"
+    - "*.lock"
+  binary_files: true
+
+# Лимиты для больших проектов
+limits:
+  max_files: 50
+  max_lines: 10000
+  max_context_tokens: 8000
+
+# Режим комментариев
+comments:
+  mode: both  # inline | summary | both
+  severity_levels: true
+  markdown: true
+
+# Retry стратегия для API вызовов
+retry:
+  max_attempts: 3
+  backoff_multiplier: 2
+  initial_delay: 1

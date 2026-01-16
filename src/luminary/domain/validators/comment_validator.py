@@ -89,6 +89,9 @@ class CommentValidator:
             # Get LLM response
             logger.debug(f"Validating comment for {file_change.path}:{comment.line_number}")
             response = self.llm_provider.generate(prompt)
+            
+            # Log the raw response for debugging (truncated)
+            logger.debug(f"Raw validation response (first 500 chars): {response[:500]}")
 
             # Check if response contains the prompt (LLM sometimes echoes back the prompt)
             # This happens when LLM returns prompt + response instead of just response
@@ -96,6 +99,7 @@ class CommentValidator:
                 "You are a validator for code review comments",
                 "You are Qwen",
                 "You are an expert code reviewer",
+                "Evaluate this code review comment",
             ]
             
             # If response starts with prompt text, remove it
@@ -301,9 +305,14 @@ class CommentValidator:
             else:
                 # Default to valid if can't parse (better to accept than reject on parsing errors)
                 logger.warning(
-                    f"Could not parse validation response after {len(parsing_errors)} attempts. "
-                    f"Errors: {parsing_errors}. Response preview: {response[:200]}"
+                    f"Could not parse validation response after {len(parsing_errors)} attempts."
                 )
+                logger.warning(
+                    f"Response appears to be code/text instead of JSON. "
+                    f"Consider disabling validation with --no-validate or validator.enabled: false in config."
+                )
+                logger.debug(f"Parsing errors: {parsing_errors}")
+                logger.debug(f"Full unparseable response: {response}")
                 valid = True
                 reason = "Could not parse validation response (using fallback: assuming valid)"
             

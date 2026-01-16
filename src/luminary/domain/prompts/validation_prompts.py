@@ -9,31 +9,24 @@ from luminary.domain.models.file_change import FileChange
 class ValidationPromptBuilder:
     """Builder for comment validation prompts"""
 
-    DEFAULT_VALIDATION_PROMPT = """Evaluate this code review comment. Return ONLY valid JSON, no other text.
+    DEFAULT_VALIDATION_PROMPT = """Task: Evaluate code review comment and return JSON.
 
 Code context:
 {code_context}
 
-Comment to evaluate:
+Comment:
 {comment}
 
-Return this JSON structure (copy the format exactly):
-{{
-    "valid": true,
-    "reason": "brief explanation",
-    "scores": {{
-        "relevance": 0.8,
-        "usefulness": 0.9,
-        "non_redundancy": 0.7
-    }}
-}}
+Instructions:
+1. Rate relevance (0.0-1.0): Does comment relate to code?
+2. Rate usefulness (0.0-1.0): Is it helpful?
+3. Rate non_redundancy (0.0-1.0): Does it add value?
+4. Valid if all >= 0.7
 
-Evaluation criteria:
-- relevance: Does it relate to the code? (0.0-1.0)
-- usefulness: Is it helpful? (0.0-1.0)  
-- non_redundancy: Does it add value? (0.0-1.0)
+OUTPUT FORMAT - Return EXACTLY this JSON structure, nothing else:
+{{"valid": true, "reason": "comment is helpful and relevant", "scores": {{"relevance": 0.9, "usefulness": 0.8, "non_redundancy": 0.7}}}}
 
-Valid if all scores >= 0.7. Return ONLY the JSON object, nothing else."""
+DO NOT write any code, explanations, or text. ONLY return the JSON object above with your evaluation."""
 
     def __init__(self, custom_prompt: Optional[str] = None):
         """Initialize validation prompt builder
