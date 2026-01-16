@@ -35,9 +35,13 @@ class FileChange:
         """Check if file is binary (simple heuristic)"""
         if self.new_content:
             try:
-                self.new_content.encode("utf-8")
+                # Handle both str and bytes
+                if isinstance(self.new_content, bytes):
+                    self.new_content.decode("utf-8")
+                else:
+                    self.new_content.encode("utf-8")
                 return False
-            except UnicodeEncodeError:
+            except (UnicodeEncodeError, UnicodeDecodeError):
                 return True
         return False
 

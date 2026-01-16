@@ -144,10 +144,16 @@ class GitLabClient:
                 # Get project separately (mr.project may not be available in some GitLab versions)
                 project = self._retry_api_call(lambda: self.gl.projects.get(project_id))
                 # Try to get file content from MR branch
-                file_content = self._retry_api_call(
-                    lambda: project.files.get(new_path, ref=mr.source_branch).decode()
+                file_obj = self._retry_api_call(
+                    lambda: project.files.get(new_path, ref=mr.source_branch)
                 )
-                new_content = file_content
+                # Handle both bytes and str from python-gitlab
+                if isinstance(file_obj, bytes):
+                    new_content = file_obj.decode('utf-8')
+                elif hasattr(file_obj, 'decode'):
+                    new_content = file_obj.decode('utf-8')
+                else:
+                    new_content = str(file_obj)
             except Exception as e:
                 logger.debug(f"Could not fetch content for {new_path}: {e}")
 
