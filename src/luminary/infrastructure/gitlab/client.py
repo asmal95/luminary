@@ -244,14 +244,17 @@ class GitLabClient:
             refs_to_try = [
                 mr.source_branch,  # MR source branch
                 mr.diff_refs.get("head_sha"),  # Head commit SHA
-                "HEAD",  # Default branch HEAD
             ]
             
             for ref in refs_to_try:
                 if not ref:
                     continue
                 try:
-                    file_obj = self._retry_api_call(lambda: project.files.get(file_path, ref=ref))
+                    # Use raw file API which is more reliable
+                    file_obj = self._retry_api_call(
+                        lambda: project.files.get(file_path, ref=ref),
+                        catch_404=True  # Don't retry on 404
+                    )
                     
                     # Handle different return types from python-gitlab
                     if isinstance(file_obj, bytes):
@@ -279,7 +282,12 @@ class GitLabClient:
                     if content:
                         break  # Successfully got content
                 except Exception as e:
-                    logger.debug(f"Could not get file {file_path} from ref {ref}: {e}")
+                    # Log at debug level to avoid spam - 404 is expected for new files
+                    error_msg = str(e)
+                    if "404" in error_msg or "not found" in error_msg.lower():
+                        logger.debug(f"File {file_path} not found in ref {ref} (may be new file)")
+                    else:
+                        logger.debug(f"Could not get file {file_path} from ref {ref}: {e}")
                     continue
             
             if not content:
@@ -410,7 +418,11 @@ class GitLabClient:
                     raise RuntimeError(f"GitLab API authentication failed: {e}") from e
 
                 # Don't retry on client errors (except rate limits)
+                # 404 is expected for new files, so log at debug level instead of error
                 if status_code and 400 <= status_code < 500 and status_code != 429:
+                    if status_code == 404:
+                        logger.debug(f"GitLab API 404 (file not found): {e}")
+                        raise RuntimeError(f"GitLab API client error: {e}") from e
                     logger.error(f"GitLab API client error: {e}")
                     raise RuntimeError(f"GitLab API client error: {e}") from e
 

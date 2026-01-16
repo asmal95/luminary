@@ -114,9 +114,10 @@ class MRReviewService:
                 results.append(result)
 
                 # Post comments to GitLab
+                # Pass original file_change to preserve full file content for line_code calculation
                 if post_comments and result.has_comments and self.comment_mode in ("inline", "both"):
                     posted, failed = self._post_comments_to_gitlab(
-                        project_id, merge_request_iid, result
+                        project_id, merge_request_iid, result, file_change
                     )
                     comments_posted += posted
                     comments_failed += failed
@@ -147,7 +148,7 @@ class MRReviewService:
         return stats
 
     def _post_comments_to_gitlab(
-        self, project_id: str, merge_request_iid: int, result: ReviewResult
+        self, project_id: str, merge_request_iid: int, result: ReviewResult, original_file_change: FileChange
     ) -> tuple[int, int]:
         """Post comments from review result to GitLab
         
@@ -155,6 +156,7 @@ class MRReviewService:
             project_id: Project ID
             merge_request_iid: Merge request IID
             result: Review result
+            original_file_change: Original FileChange (preserves full file content)
             
         Returns:
             Tuple of (posted_count, failed_count)
@@ -163,8 +165,9 @@ class MRReviewService:
         failed = 0
 
         # Only post inline comments here; summary is posted separately.
-        # Use file_content from FileChange if available for line_code calculation
-        file_content = result.file_change.new_content if result.file_change else None
+        # Use original file_change content for line_code calculation (preserves full file content)
+        # When chunking is used, result.file_change.new_content contains only the last chunk
+        file_content = original_file_change.new_content if original_file_change else None
         for comment in result.inline_comments:
             try:
                 success = self.gitlab_client.post_comment(
