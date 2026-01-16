@@ -155,26 +155,31 @@ class GitLabClient:
                     if not ref:
                         continue
                     try:
-                        # repository_blob returns raw file content (bytes)
-                        blob = self._retry_api_call(
-                            lambda: project.repository_blob(new_path, ref=ref)
-                        )
-                        if blob:
-                            if isinstance(blob, bytes):
-                                new_content = blob.decode('utf-8')
-                            else:
-                                new_content = str(blob)
-                            logger.debug(f"Successfully fetched content via repository_blob for {new_path} ({len(new_content)} chars)")
-                            break
-                    except GitlabError as e:
-                        status_code = e.response_code if hasattr(e, "response_code") else None
+                        # Try repository_blob API (returns raw file content as bytes)
+                        # Check if method exists first (may not be available in all python-gitlab versions)
+                        if hasattr(project, 'repository_blob'):
+                            blob = self._retry_api_call(
+                                lambda: project.repository_blob(new_path, ref=ref)
+                            )
+                            if blob:
+                                if isinstance(blob, bytes):
+                                    new_content = blob.decode('utf-8')
+                                else:
+                                    new_content = str(blob)
+                                logger.debug(f"Successfully fetched content via repository_blob for {new_path} ({len(new_content)} chars)")
+                                break
+                        else:
+                            logger.debug(f"repository_blob method not available, trying files.get")
+                            break  # Skip to files.get fallback
+                    except (AttributeError, GitlabError) as e:
+                        status_code = getattr(e, 'response_code', None) if isinstance(e, GitlabError) else None
                         if status_code == 404:
                             logger.debug(f"File {new_path} not found in ref {ref}, trying next ref")
                         else:
-                            logger.debug(f"repository_blob failed for {new_path}@${ref}: {e}, trying files.get")
+                            logger.debug(f"repository_blob failed for {new_path}@{ref}: {e}, trying files.get")
                         continue
                     except Exception as e:
-                        logger.debug(f"repository_blob exception for {new_path}@${ref}: {e}, trying files.get")
+                        logger.debug(f"repository_blob exception for {new_path}@{ref}: {e}, trying files.get")
                         continue
                 
                 # Fallback to files.get API if repository_blob didn't work
@@ -183,26 +188,54 @@ class GitLabClient:
                         file_obj = self._retry_api_call(
                             lambda: project.files.get(new_path, ref=mr.source_branch)
                         )
+                        
+                        # Debug: log what we got
+                        logger.debug(f"files.get returned type: {type(file_obj)}, has decode_bytes: {hasattr(file_obj, 'decode_bytes')}, has content: {hasattr(file_obj, 'content')}, has decode: {hasattr(file_obj, 'decode')}")
+                        
                         # Handle different return types from python-gitlab
+                        # ProjectFile.decode() doesn't take arguments - it just decodes the file content
                         if isinstance(file_obj, bytes):
                             new_content = file_obj.decode('utf-8')
-                        elif hasattr(file_obj, 'decode'):
-                            new_content = file_obj.decode('utf-8')
+                        elif hasattr(file_obj, 'decode_bytes'):
+                            # decode_bytes() returns bytes, then we decode to string
+                            try:
+                                decoded_bytes = file_obj.decode_bytes()
+                                new_content = decoded_bytes.decode('utf-8')
+                            except Exception as e:
+                                logger.warning(f"decode_bytes() failed for {new_path}: {e}")
+                                new_content = None
                         elif hasattr(file_obj, 'content'):
+                            # ProjectFile has content attribute (may be bytes or str)
                             file_content = file_obj.content
                             if isinstance(file_content, bytes):
                                 new_content = file_content.decode('utf-8')
+                            elif isinstance(file_content, str):
+                                new_content = file_content
                             else:
-                                new_content = str(file_content)
-                        elif hasattr(file_obj, 'decode_bytes'):
-                            new_content = file_obj.decode_bytes().decode('utf-8')
+                                new_content = str(file_content) if file_content else None
+                        elif hasattr(file_obj, 'decode'):
+                            # decode() without arguments - try calling it directly
+                            try:
+                                decoded = file_obj.decode()  # No arguments!
+                                if isinstance(decoded, bytes):
+                                    new_content = decoded.decode('utf-8')
+                                elif isinstance(decoded, str):
+                                    new_content = decoded
+                                else:
+                                    new_content = str(decoded)
+                            except Exception as e:
+                                logger.warning(f"decode() failed for {new_path}: {e}")
+                                new_content = None
                         else:
-                            new_content = str(file_obj)
+                            # Last resort - convert to string
+                            new_content = str(file_obj) if file_obj else None
                         
-                        if new_content:
+                        if new_content and len(new_content.strip()) > 0:
                             logger.debug(f"Successfully fetched content via files.get for {new_path} ({len(new_content)} chars)")
+                        else:
+                            logger.warning(f"files.get returned empty content for {new_path}")
                     except Exception as e:
-                        logger.warning(f"Could not fetch content via files.get for {new_path}: {e}")
+                        logger.warning(f"Could not fetch content via files.get for {new_path}: {e}", exc_info=True)
             except Exception as e:
                 logger.warning(f"Could not fetch content for {new_path}: {e}")
 
