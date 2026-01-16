@@ -22,7 +22,8 @@ Evaluate the comment based on:
 2. **Usefulness**: Is the comment constructive and helpful?
 3. **Non-redundancy**: Does the comment add value, not just state the obvious?
 
-Respond in JSON format:
+IMPORTANT: Respond ONLY with valid JSON, nothing else. No explanations, no markdown, just the JSON object.
+
 {{
     "valid": true/false,
     "reason": "brief explanation",

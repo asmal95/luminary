@@ -90,6 +90,41 @@ class CommentValidator:
             logger.debug(f"Validating comment for {file_change.path}:{comment.line_number}")
             response = self.llm_provider.generate(prompt)
 
+            # Check if response contains the prompt (LLM sometimes echoes back the prompt)
+            # This happens when LLM returns prompt + response instead of just response
+            prompt_starters = [
+                "You are a validator for code review comments",
+                "You are Qwen",
+                "You are an expert code reviewer",
+            ]
+            
+            # If response starts with prompt text, remove it
+            for starter in prompt_starters:
+                if response.startswith(starter):
+                    # Find the first JSON object start
+                    json_start = response.find("{")
+                    if json_start > 50:  # JSON appears later in response (after prompt)
+                        response = response[json_start:].strip()
+                        break
+            
+            # Also check if entire prompt is echoed back
+            if response.startswith(prompt[:150]):  # Check first 150 chars
+                # Extract only the response part (after prompt)
+                response = response[len(prompt):].strip()
+            
+            # If response still contains prompt text (multiline), try to extract JSON
+            if any(starter in response for starter in prompt_starters):
+                # Find JSON boundaries - look for first { and last }
+                json_start = response.find("{")
+                if json_start >= 0:
+                    json_end = response.rfind("}")
+                    if json_end > json_start:
+                        # Extract just the JSON part
+                        potential_json = response[json_start:json_end + 1]
+                        # Quick validation: does it look like JSON?
+                        if potential_json.strip().startswith("{") and potential_json.strip().endswith("}"):
+                            response = potential_json.strip()
+
             # Parse response
             result = self._parse_validation_response(response, comment)
 

@@ -163,6 +163,8 @@ class MRReviewService:
         failed = 0
 
         # Only post inline comments here; summary is posted separately.
+        # Use file_content from FileChange if available for line_code calculation
+        file_content = result.file_change.new_content if result.file_change else None
         for comment in result.inline_comments:
             try:
                 success = self.gitlab_client.post_comment(
@@ -171,6 +173,7 @@ class MRReviewService:
                     body=comment.to_markdown(),
                     line_number=comment.line_number,
                     file_path=comment.file_path or result.file_change.path,
+                    file_content=file_content,
                 )
                 if success:
                     posted += 1

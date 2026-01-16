@@ -224,48 +224,66 @@ class GitLabClient:
 
         return hunks
 
-    def _calculate_line_code(self, project_id: str, file_path: str, line_number: int, ref: str) -> Optional[str]:
+    def _calculate_line_code(self, project_id: str, file_path: str, line_number: int, mr: "ProjectMergeRequest") -> Optional[str]:
         """Calculate line_code for GitLab inline comment
         
         Args:
             project_id: Project ID or path
             file_path: File path
             line_number: Line number (1-based)
-            ref: Git reference (branch, commit, etc.)
+            mr: Merge request object (to get refs)
             
         Returns:
             line_code hash or None if cannot calculate
         """
         try:
             project = self._retry_api_call(lambda: self.gl.projects.get(project_id))
-            file_obj = self._retry_api_call(lambda: project.files.get(file_path, ref=ref))
             
-            # Handle different return types from python-gitlab
+            # Try multiple strategies to get file content
             content = None
-            if isinstance(file_obj, bytes):
-                content = file_obj.decode('utf-8')
-            elif hasattr(file_obj, 'decode'):
-                # ProjectFile object with decode method
-                content = file_obj.decode('utf-8')
-            elif hasattr(file_obj, 'content'):
-                # ProjectFile object with content attribute
-                file_content = file_obj.content
-                if isinstance(file_content, bytes):
-                    content = file_content.decode('utf-8')
-                else:
-                    content = str(file_content)
-            elif hasattr(file_obj, 'data'):
-                # ProjectFile object with data attribute
-                file_data = file_obj.data
-                if isinstance(file_data, bytes):
-                    content = file_data.decode('utf-8')
-                else:
-                    content = str(file_data)
-            else:
-                content = str(file_obj)
+            refs_to_try = [
+                mr.source_branch,  # MR source branch
+                mr.diff_refs.get("head_sha"),  # Head commit SHA
+                "HEAD",  # Default branch HEAD
+            ]
+            
+            for ref in refs_to_try:
+                if not ref:
+                    continue
+                try:
+                    file_obj = self._retry_api_call(lambda: project.files.get(file_path, ref=ref))
+                    
+                    # Handle different return types from python-gitlab
+                    if isinstance(file_obj, bytes):
+                        content = file_obj.decode('utf-8')
+                    elif hasattr(file_obj, 'decode'):
+                        # ProjectFile object with decode method
+                        content = file_obj.decode('utf-8')
+                    elif hasattr(file_obj, 'content'):
+                        # ProjectFile object with content attribute
+                        file_content = file_obj.content
+                        if isinstance(file_content, bytes):
+                            content = file_content.decode('utf-8')
+                        else:
+                            content = str(file_content)
+                    elif hasattr(file_obj, 'data'):
+                        # ProjectFile object with data attribute
+                        file_data = file_obj.data
+                        if isinstance(file_data, bytes):
+                            content = file_data.decode('utf-8')
+                        else:
+                            content = str(file_data)
+                    else:
+                        content = str(file_obj)
+                    
+                    if content:
+                        break  # Successfully got content
+                except Exception as e:
+                    logger.debug(f"Could not get file {file_path} from ref {ref}: {e}")
+                    continue
             
             if not content:
-                logger.debug(f"Empty content for {file_path}")
+                logger.debug(f"Empty content for {file_path} after trying all refs")
                 return None
             
             # Get the specific line (line_number is 1-based)
@@ -276,6 +294,8 @@ class GitLabClient:
                 # Some GitLab versions require this to match the exact line
                 line_code = hashlib.sha256(line_content.encode('utf-8')).hexdigest()
                 return line_code
+            else:
+                logger.debug(f"Line {line_number} out of range for {file_path} (file has {len(lines)} lines)")
         except Exception as e:
             logger.debug(f"Could not calculate line_code for {file_path}:{line_number}: {e}")
         return None
@@ -288,6 +308,7 @@ class GitLabClient:
         line_number: Optional[int] = None,
         file_path: Optional[str] = None,
         line_type: str = "new",
+        file_content: Optional[str] = None,
     ) -> bool:
         """Post a comment to merge request
         
@@ -308,9 +329,22 @@ class GitLabClient:
             if line_number and file_path:
                 # Inline comment - need to calculate line_code for GitLab API
                 # line_code is required by GitLab API for inline comments
-                line_code = self._calculate_line_code(
-                    project_id, file_path, line_number, mr.source_branch
-                )
+                # Try using provided file_content first, then fall back to fetching from API
+                line_code = None
+                if file_content:
+                    try:
+                        lines = file_content.split('\n')
+                        if 1 <= line_number <= len(lines):
+                            line_content = lines[line_number - 1]
+                            line_code = hashlib.sha256(line_content.encode('utf-8')).hexdigest()
+                    except Exception as e:
+                        logger.debug(f"Could not calculate line_code from provided content: {e}")
+                
+                # Fall back to API if file_content not available or failed
+                if not line_code:
+                    line_code = self._calculate_line_code(
+                        project_id, file_path, line_number, mr
+                    )
                 
                 if not line_code:
                     logger.warning(
