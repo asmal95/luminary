@@ -148,13 +148,29 @@ class GitLabClient:
                 file_obj = self._retry_api_call(
                     lambda: project.files.get(new_path, ref=mr.source_branch)
                 )
-                # Handle both bytes and str from python-gitlab
+                # Handle different return types from python-gitlab
+                # python-gitlab returns ProjectFile object with decode() method or content attribute
                 if isinstance(file_obj, bytes):
                     new_content = file_obj.decode('utf-8')
                 elif hasattr(file_obj, 'decode'):
+                    # ProjectFile object with decode method
                     new_content = file_obj.decode('utf-8')
+                elif hasattr(file_obj, 'content'):
+                    # ProjectFile object with content attribute
+                    file_content = file_obj.content
+                    if isinstance(file_content, bytes):
+                        new_content = file_content.decode('utf-8')
+                    else:
+                        new_content = str(file_content)
+                elif hasattr(file_obj, 'decode_bytes'):
+                    # Some versions use decode_bytes
+                    new_content = file_obj.decode_bytes().decode('utf-8')
                 else:
+                    # Last resort - convert to string
                     new_content = str(file_obj)
+                
+                if new_content:
+                    logger.debug(f"Successfully fetched content for {new_path} ({len(new_content)} chars)")
             except Exception as e:
                 logger.debug(f"Could not fetch content for {new_path}: {e}")
 
@@ -343,14 +359,27 @@ class GitLabClient:
                 if file_content:
                     try:
                         lines = file_content.split('\n')
+                        logger.debug(
+                            f"Calculating line_code for {file_path}:{line_number} "
+                            f"from file_content ({len(lines)} lines total)"
+                        )
                         if 1 <= line_number <= len(lines):
                             line_content = lines[line_number - 1]
                             line_code = hashlib.sha256(line_content.encode('utf-8')).hexdigest()
+                            logger.debug(f"Successfully calculated line_code from file_content: {line_code[:16]}...")
+                        else:
+                            logger.warning(
+                                f"Line {line_number} out of range for {file_path} "
+                                f"(file has {len(lines)} lines, provided content has {len(lines)} lines)"
+                            )
                     except Exception as e:
-                        logger.debug(f"Could not calculate line_code from provided content: {e}")
+                        logger.warning(f"Could not calculate line_code from provided content: {e}", exc_info=True)
+                else:
+                    logger.debug(f"No file_content provided for {file_path}, will try API")
                 
                 # Fall back to API if file_content not available or failed
                 if not line_code:
+                    logger.debug(f"Attempting to calculate line_code via API for {file_path}:{line_number}")
                     line_code = self._calculate_line_code(
                         project_id, file_path, line_number, mr
                     )
@@ -358,6 +387,8 @@ class GitLabClient:
                 if not line_code:
                     logger.warning(
                         f"Could not calculate line_code for {file_path}:{line_number}. "
+                        f"file_content provided: {file_content is not None}, "
+                        f"file_content length: {len(file_content) if file_content else 0}. "
                         "Skipping inline comment (GitLab requires line_code)."
                     )
                     return False

@@ -168,6 +168,20 @@ class MRReviewService:
         # Use original file_change content for line_code calculation (preserves full file content)
         # When chunking is used, result.file_change.new_content contains only the last chunk
         file_content = original_file_change.new_content if original_file_change else None
+        
+        # Log for debugging
+        if not file_content:
+            logger.warning(
+                f"original_file_change.new_content is None for {result.file_change.path}. "
+                "line_code calculation will fall back to API."
+            )
+        else:
+            logger.debug(
+                f"Using original file content for line_code calculation: "
+                f"{result.file_change.path} ({len(file_content)} chars, "
+                f"{len(file_content.split(chr(10)))} lines)"
+            )
+        
         for comment in result.inline_comments:
             try:
                 success = self.gitlab_client.post_comment(
