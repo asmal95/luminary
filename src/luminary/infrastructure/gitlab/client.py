@@ -1,5 +1,6 @@
 """GitLab API client"""
 
+import hashlib
 import logging
 import os
 import time
@@ -223,6 +224,62 @@ class GitLabClient:
 
         return hunks
 
+    def _calculate_line_code(self, project_id: str, file_path: str, line_number: int, ref: str) -> Optional[str]:
+        """Calculate line_code for GitLab inline comment
+        
+        Args:
+            project_id: Project ID or path
+            file_path: File path
+            line_number: Line number (1-based)
+            ref: Git reference (branch, commit, etc.)
+            
+        Returns:
+            line_code hash or None if cannot calculate
+        """
+        try:
+            project = self._retry_api_call(lambda: self.gl.projects.get(project_id))
+            file_obj = self._retry_api_call(lambda: project.files.get(file_path, ref=ref))
+            
+            # Handle different return types from python-gitlab
+            content = None
+            if isinstance(file_obj, bytes):
+                content = file_obj.decode('utf-8')
+            elif hasattr(file_obj, 'decode'):
+                # ProjectFile object with decode method
+                content = file_obj.decode('utf-8')
+            elif hasattr(file_obj, 'content'):
+                # ProjectFile object with content attribute
+                file_content = file_obj.content
+                if isinstance(file_content, bytes):
+                    content = file_content.decode('utf-8')
+                else:
+                    content = str(file_content)
+            elif hasattr(file_obj, 'data'):
+                # ProjectFile object with data attribute
+                file_data = file_obj.data
+                if isinstance(file_data, bytes):
+                    content = file_data.decode('utf-8')
+                else:
+                    content = str(file_data)
+            else:
+                content = str(file_obj)
+            
+            if not content:
+                logger.debug(f"Empty content for {file_path}")
+                return None
+            
+            # Get the specific line (line_number is 1-based)
+            lines = content.split('\n')
+            if 1 <= line_number <= len(lines):
+                line_content = lines[line_number - 1]
+                # GitLab line_code format: SHA256 hash of the line content
+                # Some GitLab versions require this to match the exact line
+                line_code = hashlib.sha256(line_content.encode('utf-8')).hexdigest()
+                return line_code
+        except Exception as e:
+            logger.debug(f"Could not calculate line_code for {file_path}:{line_number}: {e}")
+        return None
+
     def post_comment(
         self,
         project_id: str,
@@ -249,23 +306,34 @@ class GitLabClient:
             mr = self.get_merge_request(project_id, merge_request_iid)
 
             if line_number and file_path:
-                # Inline comment
-                self._retry_api_call(
-                    lambda: mr.discussions.create(
-                        {
-                            "body": body,
-                            "position": {
-                                "base_sha": mr.diff_refs["base_sha"],
-                                "start_sha": mr.diff_refs["start_sha"],
-                                "head_sha": mr.diff_refs["head_sha"],
-                                "old_path": file_path,
-                                "new_path": file_path,
-                                "position_type": "text",
-                                "new_line": line_number if line_type == "new" else None,
-                                "old_line": line_number if line_type == "old" else None,
-                            },
-                        }
+                # Inline comment - need to calculate line_code for GitLab API
+                # line_code is required by GitLab API for inline comments
+                line_code = self._calculate_line_code(
+                    project_id, file_path, line_number, mr.source_branch
+                )
+                
+                if not line_code:
+                    logger.warning(
+                        f"Could not calculate line_code for {file_path}:{line_number}. "
+                        "Skipping inline comment (GitLab requires line_code)."
                     )
+                    return False
+                
+                # Build position dict
+                position = {
+                    "base_sha": mr.diff_refs["base_sha"],
+                    "start_sha": mr.diff_refs["start_sha"],
+                    "head_sha": mr.diff_refs["head_sha"],
+                    "old_path": file_path,
+                    "new_path": file_path,
+                    "position_type": "text",
+                    "new_line": line_number if line_type == "new" else None,
+                    "old_line": line_number if line_type == "old" else None,
+                    "line_code": line_code,  # Required by GitLab API
+                }
+                
+                self._retry_api_call(
+                    lambda: mr.discussions.create({"body": body, "position": position})
                 )
                 logger.debug(f"Posted inline comment to {file_path}:{line_number}")
             else:

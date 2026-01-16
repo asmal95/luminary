@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from typing import List, Optional
 
 from luminary.domain.models.comment import Comment
@@ -136,38 +137,118 @@ class CommentValidator:
         Returns:
             ValidationResult
         """
-        # Try to extract JSON from response
-        try:
-            # Look for JSON block
+        if not response or not response.strip():
+            logger.warning("Empty validation response, assuming valid")
+            return ValidationResult(
+                valid=True,
+                reason="Empty validation response (using fallback)",
+                scores={"relevance": 0.7, "usefulness": 0.7, "non_redundancy": 0.7},
+                comment=comment,
+            )
+        
+        # Strategy 1: Try to extract JSON from markdown code blocks
+        json_str = None
+        code_block_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response, re.DOTALL)
+        if code_block_match:
+            json_str = code_block_match.group(1)
+        
+        # Strategy 2: Look for JSON object boundaries
+        if not json_str:
             start = response.find("{")
             end = response.rfind("}") + 1
             if start >= 0 and end > start:
                 json_str = response[start:end]
+        
+        # Strategy 3: Try entire response
+        if not json_str:
+            json_str = response.strip()
+        
+        # Try multiple parsing strategies
+        data = None
+        parsing_errors = []
+        
+        # Attempt 1: Direct parse
+        if json_str:
+            try:
                 data = json.loads(json_str)
-            else:
-                # Try parsing entire response
-                data = json.loads(response)
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.warning(f"Failed to parse validation response as JSON: {e}")
+            except json.JSONDecodeError as e:
+                parsing_errors.append(f"Direct parse: {e}")
+                
+                # Attempt 2: Try to fix common JSON issues
+                try:
+                    # Remove trailing commas before closing braces/brackets
+                    fixed_json = re.sub(r',(\s*[}\]])', r'\1', json_str)
+                    # Fix single quotes to double quotes (basic)
+                    fixed_json = re.sub(r"'(\w+)':", r'"\1":', fixed_json)
+                    data = json.loads(fixed_json)
+                except (json.JSONDecodeError, ValueError) as e2:
+                    parsing_errors.append(f"Fixed parse: {e2}")
+                    
+                    # Attempt 3: Try to extract just the values we need
+                    try:
+                        # Use regex to extract key-value pairs
+                        valid_match = re.search(r'"valid"\s*:\s*(true|false)', json_str, re.IGNORECASE)
+                        reason_match = re.search(r'"reason"\s*:\s*"([^"]*)"', json_str)
+                        
+                        if valid_match or reason_match:
+                            valid = valid_match.group(1).lower() == "true" if valid_match else True
+                            reason = reason_match.group(1) if reason_match else "Partial parse"
+                            
+                            # Try to extract scores
+                            scores = {}
+                            for score_key in ["relevance", "usefulness", "non_redundancy"]:
+                                score_match = re.search(
+                                    rf'"{score_key}"\s*:\s*([0-9.]+)',
+                                    json_str,
+                                    re.IGNORECASE
+                                )
+                                if score_match:
+                                    try:
+                                        scores[score_key] = float(score_match.group(1))
+                                    except ValueError:
+                                        scores[score_key] = 0.7
+                            
+                            if not scores:
+                                scores = {"relevance": 0.7, "usefulness": 0.7, "non_redundancy": 0.7}
+                            
+                            return ValidationResult(
+                                valid=valid,
+                                reason=reason,
+                                scores=scores,
+                                comment=comment,
+                            )
+                    except Exception as e3:
+                        parsing_errors.append(f"Regex extract: {e3}")
+        
+        # If we successfully parsed JSON
+        if data:
+            valid = data.get("valid", False)
+            reason = data.get("reason", "No reason provided")
+            scores = data.get("scores", {})
+        else:
             # Fallback: check if response contains "valid: true/false"
-            response_lower = response.strip().lower() if response else ""
-            if not response_lower:
-                # Empty response - assume valid to not lose comments on validator failure
-                logger.warning("Empty validation response, assuming valid")
+            response_lower = response.strip().lower()
+            if "valid: true" in response_lower or '"valid": true' in response_lower or response_lower.startswith("true"):
                 valid = True
-            elif "valid: true" in response_lower or '"valid": true' in response_lower or response_lower.startswith("true"):
-                valid = True
+                reason = "Fallback parse: found valid=true"
             elif "valid: false" in response_lower or '"valid": false' in response_lower or response_lower.startswith("false"):
                 valid = False
+                reason = "Fallback parse: found valid=false"
             else:
                 # Default to valid if can't parse (better to accept than reject on parsing errors)
-                logger.warning(f"Could not determine validity from response: {response[:100]}, assuming valid")
+                logger.warning(
+                    f"Could not parse validation response after {len(parsing_errors)} attempts. "
+                    f"Errors: {parsing_errors}. Response preview: {response[:200]}"
+                )
                 valid = True
-
+                reason = "Could not parse validation response (using fallback: assuming valid)"
+            
+            scores = {"relevance": 0.7, "usefulness": 0.7, "non_redundancy": 0.7}
+            
             return ValidationResult(
                 valid=valid,
-                reason="Could not parse validation response (using fallback)",
-                scores={"relevance": 0.7, "usefulness": 0.7, "non_redundancy": 0.7},
+                reason=reason,
+                scores=scores,
                 comment=comment,
             )
 
