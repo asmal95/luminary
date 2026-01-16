@@ -250,11 +250,8 @@ class GitLabClient:
                 if not ref:
                     continue
                 try:
-                    # Use raw file API which is more reliable
-                    file_obj = self._retry_api_call(
-                        lambda: project.files.get(file_path, ref=ref),
-                        catch_404=True  # Don't retry on 404
-                    )
+                    # Try to get file content - don't retry on 404
+                    file_obj = project.files.get(file_path, ref=ref)
                     
                     # Handle different return types from python-gitlab
                     if isinstance(file_obj, bytes):
@@ -281,13 +278,17 @@ class GitLabClient:
                     
                     if content:
                         break  # Successfully got content
-                except Exception as e:
-                    # Log at debug level to avoid spam - 404 is expected for new files
-                    error_msg = str(e)
-                    if "404" in error_msg or "not found" in error_msg.lower():
+                except GitlabError as e:
+                    # Check if it's a 404 error (expected for new files or files not in ref)
+                    status_code = e.response_code if hasattr(e, "response_code") else None
+                    if status_code == 404:
                         logger.debug(f"File {file_path} not found in ref {ref} (may be new file)")
                     else:
                         logger.debug(f"Could not get file {file_path} from ref {ref}: {e}")
+                    continue
+                except Exception as e:
+                    # Other exceptions (not GitlabError) - log at debug level
+                    logger.debug(f"Could not get file {file_path} from ref {ref}: {e}")
                     continue
             
             if not content:
