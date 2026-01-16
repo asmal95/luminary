@@ -235,6 +235,11 @@ def file(ctx, file_path: Path, provider: str, comments_mode: str, no_validate: b
     type=str,
     help="GitLab instance URL (default: from GITLAB_URL env or gitlab.com)",
 )
+@click.option(
+    "--verbose", "-v",
+    is_flag=True,
+    help="Enable verbose (DEBUG) logging",
+)
 @click.pass_context
 def mr(
     ctx,
@@ -245,12 +250,18 @@ def mr(
     no_validate: bool,
     no_post: bool,
     gitlab_url: str,
+    verbose: bool,
 ):
     """Review a GitLab merge request.
     
     PROJECT_ID: GitLab project ID or path (e.g., 'group/project')
     MERGE_REQUEST_IID: Merge request IID (internal ID, shown as !123)
     """
+    # Use verbose from command or from context (group-level option)
+    verbose_mode = verbose or ctx.obj.get("verbose", False)
+    if verbose_mode:
+        setup_logging(verbose=True)
+    
     logger = logging.getLogger(__name__)
     logger.info(f"Starting review of MR !{merge_request_iid} in {project_id}")
 
@@ -280,7 +291,7 @@ def mr(
         try:
             llm_provider = LLMProviderFactory.create(provider_type, provider_config)
         except ValueError as e:
-            _die(logger, str(e), verbose=ctx.obj.get("verbose", False), exc=e)
+            _die(logger, str(e), verbose=verbose_mode, exc=e)
 
         # Create validator if enabled
         validator = None
@@ -298,7 +309,7 @@ def mr(
                     validator_provider_type, validator_provider_config
                 )
             except ValueError as e:
-                _die(logger, str(e), verbose=ctx.obj.get("verbose", False), exc=e)
+                _die(logger, str(e), verbose=verbose_mode, exc=e)
             validator = CommentValidator(
                 validator_llm,
                 threshold=validator_threshold,
@@ -314,7 +325,7 @@ def mr(
                 retry_delay=retry_config.get("initial_delay", 1.0),
             )
         except ValueError as e:
-            _die(logger, str(e), verbose=ctx.obj.get("verbose", False), exc=e)
+            _die(logger, str(e), verbose=verbose_mode, exc=e)
 
         # Create file filter
         file_filter = FileFilter(
@@ -372,7 +383,7 @@ def mr(
     except click.ClickException:
         raise
     except Exception as e:
-        _die(logger, f"Fatal error: {e}", verbose=ctx.obj.get("verbose", False), exc=e)
+        _die(logger, f"Fatal error: {e}", verbose=verbose_mode, exc=e)
 
 
 def main():
