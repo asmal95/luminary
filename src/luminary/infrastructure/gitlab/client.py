@@ -1,5 +1,6 @@
 """GitLab API client"""
 
+import base64
 import hashlib
 import logging
 import os
@@ -205,12 +206,24 @@ class GitLabClient:
                                 logger.warning(f"decode_bytes() failed for {new_path}: {e}")
                                 new_content = None
                         elif hasattr(file_obj, 'content'):
-                            # ProjectFile has content attribute (may be bytes or str)
+                            # ProjectFile.content is Base64-encoded string in python-gitlab!
                             file_content = file_obj.content
                             if isinstance(file_content, bytes):
-                                new_content = file_content.decode('utf-8')
+                                # If bytes, try to decode as Base64 first
+                                try:
+                                    decoded_bytes = base64.b64decode(file_content)
+                                    new_content = decoded_bytes.decode('utf-8')
+                                except Exception:
+                                    # If not Base64, try direct decode
+                                    new_content = file_content.decode('utf-8')
                             elif isinstance(file_content, str):
-                                new_content = file_content
+                                # ProjectFile.content is Base64-encoded - decode it!
+                                try:
+                                    decoded_bytes = base64.b64decode(file_content)
+                                    new_content = decoded_bytes.decode('utf-8')
+                                except Exception:
+                                    # If decode fails, use as-is (shouldn't happen, but just in case)
+                                    new_content = file_content
                             else:
                                 new_content = str(file_content) if file_content else None
                         elif hasattr(file_obj, 'decode'):
@@ -337,16 +350,50 @@ class GitLabClient:
                     # Handle different return types from python-gitlab
                     if isinstance(file_obj, bytes):
                         content = file_obj.decode('utf-8')
-                    elif hasattr(file_obj, 'decode'):
-                        # ProjectFile object with decode method
-                        content = file_obj.decode('utf-8')
+                    elif hasattr(file_obj, 'decode_bytes'):
+                        # decode_bytes() is the correct method - returns bytes
+                        try:
+                            decoded_bytes = file_obj.decode_bytes()
+                            content = decoded_bytes.decode('utf-8')
+                        except Exception as e:
+                            logger.debug(f"decode_bytes() failed: {e}")
+                            raise
                     elif hasattr(file_obj, 'content'):
-                        # ProjectFile object with content attribute
+                        # ProjectFile.content is Base64-encoded string in python-gitlab
                         file_content = file_obj.content
                         if isinstance(file_content, bytes):
-                            content = file_content.decode('utf-8')
+                            try:
+                                decoded_bytes = base64.b64decode(file_content)
+                                content = decoded_bytes.decode('utf-8')
+                            except Exception:
+                                content = file_content.decode('utf-8')
+                        elif isinstance(file_content, str):
+                            # Decode Base64 string
+                            try:
+                                decoded_bytes = base64.b64decode(file_content)
+                                content = decoded_bytes.decode('utf-8')
+                            except Exception:
+                                content = file_content  # Fallback
                         else:
                             content = str(file_content)
+                    elif hasattr(file_obj, 'decode'):
+                        # decode() without arguments - LAST RESORT (may not work correctly)
+                        try:
+                            decoded_result = file_obj.decode()  # No arguments!
+                            if isinstance(decoded_result, bytes):
+                                content = decoded_result.decode('utf-8')
+                            elif isinstance(decoded_result, str):
+                                # decode() might return Base64 - try to decode
+                                try:
+                                    decoded_bytes = base64.b64decode(decoded_result)
+                                    content = decoded_bytes.decode('utf-8')
+                                except Exception:
+                                    content = decoded_result
+                            else:
+                                content = str(decoded_result)
+                        except Exception as e:
+                            logger.debug(f"decode() failed: {e}")
+                            raise
                     elif hasattr(file_obj, 'data'):
                         # ProjectFile object with data attribute
                         file_data = file_obj.data
@@ -424,24 +471,43 @@ class GitLabClient:
                 line_code = None
                 if file_content:
                     try:
-                        # Use splitlines() instead of split('\n') to handle different line endings
-                        # splitlines() handles \n, \r\n, \r correctly
-                        lines = file_content.splitlines()
+                        # Check if file_content is Base64-encoded (common with GitLab API)
+                        # Base64 strings typically don't have newlines and are longer than decoded content
+                        decoded_content = file_content
+                        if isinstance(file_content, str) and len(file_content) > 0:
+                            # Check if it looks like Base64 (only base64 chars, no newlines for short strings)
+                            is_likely_base64 = (
+                                all(c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\n' for c in file_content[:100])
+                                and '\n' not in file_content[:200]  # Base64 usually has no newlines in content
+                                and len(file_content) > 50  # Small files might not be Base64
+                            )
+                            
+                            if is_likely_base64:
+                                try:
+                                    decoded_bytes = base64.b64decode(file_content)
+                                    decoded_content = decoded_bytes.decode('utf-8')
+                                    logger.debug(f"Decoded Base64 content for {file_path} ({len(decoded_content)} chars after decode)")
+                                except Exception as e:
+                                    logger.debug(f"Content doesn't seem to be Base64: {e}, using as-is")
+                                    decoded_content = file_content
+                        
+                        # Use splitlines() to handle different line endings
+                        lines = decoded_content.splitlines()
                         logger.debug(
                             f"Calculating line_code for {file_path}:{line_number} "
-                            f"from file_content ({len(lines)} lines total, {len(file_content)} chars)"
+                            f"from file_content ({len(lines)} lines total, {len(decoded_content)} chars after decode)"
                         )
                         if 1 <= line_number <= len(lines):
                             line_content = lines[line_number - 1]
                             line_code = hashlib.sha256(line_content.encode('utf-8')).hexdigest()
                             logger.debug(f"Successfully calculated line_code from file_content: {line_code[:16]}...")
                         else:
-                            # Debug: show first 200 chars of file_content to understand the structure
-                            preview = file_content[:200].replace('\n', '\\n').replace('\r', '\\r')
+                            # Debug: show first 200 chars to understand the structure
+                            preview = decoded_content[:200].replace('\n', '\\n').replace('\r', '\\r')
                             logger.warning(
                                 f"Line {line_number} out of range for {file_path} "
-                                f"(file has {len(lines)} lines, content length: {len(file_content)} chars). "
-                                f"Content preview: {preview}..."
+                                f"(file has {len(lines)} lines, content length: {len(decoded_content)} chars after decode). "
+                                f"Content preview: {preview[:100]}..."
                             )
                     except Exception as e:
                         logger.warning(f"Could not calculate line_code from provided content: {e}", exc_info=True)
