@@ -182,6 +182,15 @@ class MRReviewService:
                 f"{len(file_content.split(chr(10)))} lines)"
             )
         
+        # Debug: log all comments to understand what we have
+        all_comments_count = len(result.comments)
+        inline_comments_count = len(result.inline_comments)
+        logger.debug(
+            f"Posting comments for {result.file_change.path}: "
+            f"{all_comments_count} total comments, {inline_comments_count} inline comments. "
+            f"Comment details: {[(c.line_number, len(c.content)) for c in result.comments]}"
+        )
+        
         for comment in result.inline_comments:
             try:
                 success = self.gitlab_client.post_comment(
