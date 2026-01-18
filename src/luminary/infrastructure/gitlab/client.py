@@ -427,10 +427,23 @@ class GitLabClient:
             # Use splitlines() to handle different line endings (\n, \r\n, \r)
             lines = content.splitlines()
             if 1 <= line_number <= len(lines):
-                line_content = lines[line_number - 1]
-                # GitLab line_code format: SHA256 hash of the line content
-                # Some GitLab versions require this to match the exact line
-                line_code = hashlib.sha256(line_content.encode('utf-8')).hexdigest()
+                # GitLab line_code format: <SHA-1 of file>_<old_line>_<new_line>
+                # SHA-1 should be computed from the file path (not content)
+                # For same line in old and new version: <SHA>_<line>_<line>
+                # For new lines: <SHA>_null_<line> or <SHA>__<line>
+                # For deleted lines: <SHA>_<line>_null or <SHA>_<line>_
+                
+                # Compute SHA-1 of file path (GitLab uses file path for line_code)
+                file_path_bytes = file_path.encode('utf-8')
+                file_sha1 = hashlib.sha1(file_path_bytes).hexdigest()
+                
+                # For new lines, use new_line for both old and new (or null for old)
+                # Since we're posting to new_line, use that for both
+                old_line_num = line_number  # For unchanged lines
+                new_line_num = line_number
+                
+                # Format: SHA1_old_line_new_line
+                line_code = f"{file_sha1}_{old_line_num}_{new_line_num}"
                 return line_code
             else:
                 logger.debug(f"Line {line_number} out of range for {file_path} (file has {len(lines)} lines, content: {len(content)} chars)")
@@ -498,9 +511,15 @@ class GitLabClient:
                             f"from file_content ({len(lines)} lines total, {len(decoded_content)} chars after decode)"
                         )
                         if 1 <= line_number <= len(lines):
-                            line_content = lines[line_number - 1]
-                            line_code = hashlib.sha256(line_content.encode('utf-8')).hexdigest()
-                            logger.debug(f"Successfully calculated line_code from file_content: {line_code[:16]}...")
+                            # GitLab line_code format: <SHA-1 of file>_<old_line>_<new_line>
+                            # Compute SHA-1 of file path (GitLab uses file path for line_code)
+                            file_path_bytes = file_path.encode('utf-8')
+                            file_sha1 = hashlib.sha1(file_path_bytes).hexdigest()
+                            
+                            # For new lines, use new_line for both old and new
+                            # Format: SHA1_old_line_new_line
+                            line_code = f"{file_sha1}_{line_number}_{line_number}"
+                            logger.debug(f"Successfully calculated line_code from file_content: {line_code}")
                         else:
                             # Debug: show first 200 chars to understand the structure
                             preview = decoded_content[:200].replace('\n', '\\n').replace('\r', '\\r')
@@ -585,27 +604,21 @@ class GitLabClient:
                     # Enhanced error logging for line_code issues
                     error_msg = str(e)
                     if "line_code" in error_msg.lower():
-                        logger.error(
-                            f"GitLab rejected line_code for {file_path}:{line_number}. "
-                            f"Line {line_number} may not exist in the MR diff (line_code validation failed). "
-                            f"Calculated line_code: {line_code[:32]}... (length: {len(line_code)}). "
-                            f"Position dict: new_line={position['new_line']}, old_line={position['old_line']}, "
-                            f"new_path={position['new_path']}, old_path={position['old_path']}. "
-                            f"Error: {error_msg[:300]}"
+                        # GitLab rejects line_code for lines outside the MR diff
+                        # This is expected - fallback to general comment is normal behavior
+                        logger.debug(
+                            f"GitLab rejected inline comment for {file_path}:{line_number} "
+                            f"(line outside diff or line_code validation failed). "
+                            f"Falling back to general comment. Error: {error_msg[:200]}"
                         )
-                        # For now, convert to general comment instead of failing completely
-                        logger.warning(
-                            f"Converting inline comment to general comment for {file_path}:{line_number} "
-                            "due to line_code validation failure"
-                        )
-                        # Try posting as general comment instead
+                        # Convert to general comment instead of failing completely
                         try:
                             self._retry_api_call(
                                 lambda: mr.notes.create({
                                     "body": f"*[Comment for {file_path}:{line_number}]*\n\n{body}"
                                 })
                             )
-                            logger.debug(f"Posted as general comment instead for {file_path}:{line_number}")
+                            logger.debug(f"Posted as general comment for {file_path}:{line_number}")
                             return True
                         except Exception as fallback_error:
                             logger.error(f"Failed to post as general comment: {fallback_error}")
