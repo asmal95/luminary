@@ -25,34 +25,10 @@ class ReviewPromptBuilder:
 
 {context}
 
-IMPORTANT: Return ONLY a valid JSON array of inline review comments. Do not include any text outside the JSON array.
+CRITICAL: You MUST return ONLY valid JSON. No markdown code blocks, no explanations, no extra text. Just pure JSON.
 
-Format for inline comments:
+Required JSON format for inline comments:
 
-```json
-[
-  {{
-    "file": "<relative_file_path>",
-    "line": <line_number>,
-    "message": "<short review message explaining the issue or suggestion>",
-    "suggestion": "<replacement code block, without markdown, or null if not applicable>"
-  }}
-]
-```
-
-Rules:
-- "file" must exactly match the file path in the diff (case-sensitive).
-- "line" must be an integer from the new version of the file (use line numbers from the code block).
-- "message" must be a short, clear, and actionable explanation (1 sentence preferred).
-- "suggestion" must contain ONLY the code to replace the line(s), without markdown or comments.
-  - Use correct indentation from the file.
-  - If no concrete replacement is appropriate, set "suggestion" to null.
-- Do not include anything outside the JSON array.
-- If no issues are found, return [].
-- Line numbers MUST refer to the line numbers shown in the code block (absolute file line numbers).
-
-Example:
-```json
 [
   {{
     "file": "src/main/java/Example.java",
@@ -63,27 +39,34 @@ Example:
   {{
     "file": "src/main/java/Example.java",
     "line": 15,
-    "message": "Consider extracting this logic into a separate method for better readability.",
-    "suggestion": "private void processData() {{\n    // extracted logic\n}}"
+    "message": "Consider extracting this logic into a separate method.",
+    "suggestion": "private void processData() {{\n    // code here\n}}"
   }}
 ]
-```
 
-If a summary is requested, provide it in a separate "summary" field after the comments array (but still in JSON format):
-```json
-{{
-  "comments": [...],
-  "summary": "Overall review summary text"
-}}
-```
+JSON RULES (MUST FOLLOW):
+1. "file" - STRING: exact file path from the diff, must be in double quotes
+2. "line" - INTEGER: line number from the code block (MUST be a number, NOT empty!)
+3. "message" - STRING: review comment, must be in double quotes
+4. "suggestion" - STRING or null: replacement code (without markdown) or null, MUST be quoted string or null (no quotes around null)
+5. ALL strings MUST be in double quotes
+6. ALL commas MUST be present
+7. NO trailing commas
+8. If no issues found, return empty array: []
 
-Guidelines:
-- Be constructive and specific
-- Focus on code quality, potential bugs, and improvements
-- Provide actionable feedback
-- Only comment on issues that matter
+VALID examples:
+✅ {{"file": "test.py", "line": 5, "message": "Fix this", "suggestion": null}}
+✅ {{"file": "test.py", "line": 10, "message": "Improve", "suggestion": "code here"}}
 
-Be concise but thorough."""
+INVALID examples (DO NOT DO THIS):
+❌ {{"file": "test.py", "line": , "message": "Fix"}}  (MISSING LINE NUMBER!)
+❌ {{"file": "test.py", "line": 5, "message": "Fix", "suggestion":}}  (INVALID NULL!)
+❌ {{"file": "test.py", "line": "5", "message": "Fix"}}  (LINE MUST BE NUMBER!)
+
+If summary is requested, use this format:
+{{"comments": [...], "summary": "text"}}
+
+Return ONLY the JSON. Nothing else."""
 
     def __init__(self, custom_prompt: Optional[str] = None):
         """Initialize prompt builder

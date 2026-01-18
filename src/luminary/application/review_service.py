@@ -341,17 +341,43 @@ class ReviewService:
             if json_match:
                 json_str = json_match.group(1)
             
+            # Fix common JSON errors before parsing
+            # 1. Fix empty line fields: "line": , -> "line": null
+            json_str = re.sub(r'"line"\s*:\s*,', '"line": null,', json_str)
+            # 2. Fix empty suggestion fields: "suggestion": -> "suggestion": null
+            json_str = re.sub(r'"suggestion"\s*:\s*,', '"suggestion": null,', json_str)
+            json_str = re.sub(r'"suggestion"\s*:\s*}', '"suggestion": null}', json_str)
+            json_str = re.sub(r'"suggestion"\s*:\s*$', '"suggestion": null', json_str, flags=re.MULTILINE)
+            # 3. Remove trailing commas before closing brackets/braces
+            json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+            # 4. Fix unquoted null values
+            json_str = re.sub(r':\s*null\b', ': null', json_str)
+            # 5. Fix missing quotes around string values (heuristic - only for known fields)
+            # This is tricky, so we'll be conservative
+            json_str = re.sub(r'"message"\s*:\s*([^",\[\]{{}}\n]+)(?=\s*[,}])', r'"message": "\1"', json_str)
+            
             # Parse JSON
             try:
                 data = json.loads(json_str)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
                 # Try to find JSON object with "comments" field
                 obj_match = re.search(r'({[^{}]*"comments"[^{}]*})', response, re.DOTALL)
                 if obj_match:
                     try:
-                        data = json.loads(obj_match.group(1))
+                        obj_str = obj_match.group(1)
+                        # Apply same fixes
+                        obj_str = re.sub(r'"line"\s*:\s*,', '"line": null,', obj_str)
+                        obj_str = re.sub(r'"suggestion"\s*:\s*,', '"suggestion": null,', obj_str)
+                        obj_str = re.sub(r'"suggestion"\s*:\s*}', '"suggestion": null}', obj_str)
+                        obj_str = re.sub(r',(\s*[}\]])', r'\1', obj_str)
+                        data = json.loads(obj_str)
                     except json.JSONDecodeError:
-                        pass
+                        # Log the actual JSON error for debugging
+                        logger.warning(
+                            f"JSON parse error for {file_path}: {e}. "
+                            f"Response preview: {json_str[:300]}..."
+                        )
+                        raise ValueError(f"Could not parse JSON from response: {e}")
             
             if data is None:
                 raise ValueError("Could not parse JSON from response")
@@ -388,18 +414,25 @@ class ReviewService:
                         f"Using expected path '{file_path}'."
                     )
                 
-                # Validate line number
+                # Validate line number - must be present and valid
                 if comment_line is None:
-                    logger.warning(f"Skipping comment without line number: {item}")
+                    logger.warning(f"Skipping comment without line number (null/empty): {item}")
                     continue
                 
                 try:
+                    # Try to convert to int (handles strings like "42" and numbers)
+                    if isinstance(comment_line, str):
+                        # Remove any whitespace
+                        comment_line = comment_line.strip()
+                        if not comment_line or comment_line == "":
+                            logger.warning(f"Skipping comment with empty line number: {item}")
+                            continue
                     line_number = int(comment_line)
                     if line_number < 1:
-                        logger.warning(f"Invalid line number {line_number}, skipping comment")
+                        logger.warning(f"Invalid line number {line_number} (must be >= 1), skipping comment")
                         continue
-                except (ValueError, TypeError):
-                    logger.warning(f"Invalid line number format '{comment_line}', skipping comment")
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Invalid line number format '{comment_line}' (type: {type(comment_line)}), skipping comment: {e}")
                     continue
                 
                 # Determine severity from message (try to infer from keywords)
