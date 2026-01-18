@@ -31,13 +31,25 @@ Output format rules:
   You MUST include the line number after "Line" - it cannot be empty!
 - If asked for a summary, use: **Summary:** text
 
+EXAMPLES OF CORRECT FORMAT:
+✅ **Line 15:** [WARNING] This method could throw a NullPointerException if input is null.
+✅ **Line 42:** [INFO] Consider extracting this logic into a separate method for better readability.
+✅ **Line 7:** [ERROR] This hardcoded password should be moved to environment variables.
+
+EXAMPLES OF INCORRECT FORMAT (DO NOT USE):
+❌ **Line :** [WARNING] Comment text  (MISSING LINE NUMBER!)
+❌ Line: Comment text  (MISSING LINE NUMBER AND FORMATTING!)
+❌ Line 15 Comment text  (MISSING COLON!)
+
 Guidelines:
 - Be constructive and specific
 - Focus on code quality, potential bugs, and improvements
 - Use severity levels: INFO (suggestions), WARNING (potential issues), ERROR (critical problems)
 - Line numbers MUST refer to the line numbers shown in the code block (absolute file line numbers).
   The line number must be a positive integer (e.g., 1, 42, 100) - NEVER leave it empty!
+  Look at the line numbers in the code block (format: "42: code here") and use those exact numbers.
 - Provide actionable feedback
+- Each inline comment must have a line number - if you cannot determine the exact line, use the closest line number from the code block
 
 Be concise but thorough."""
 

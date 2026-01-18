@@ -90,7 +90,7 @@ class ReviewService:
             comments: List[Comment] = []
             summaries: List[str] = []
             for response in responses:
-                comments.extend(self._parse_llm_response(response, file_change.path))
+                comments.extend(self._parse_llm_response(response, file_change.path, file_change))
                 summary = self._extract_summary(response)
                 if summary:
                     summaries.append(summary)
@@ -313,12 +313,13 @@ class ReviewService:
 
         return None
 
-    def _parse_llm_response(self, response: str, file_path: str) -> List[Comment]:
+    def _parse_llm_response(self, response: str, file_path: str, file_change: Optional[FileChange] = None) -> List[Comment]:
         """Parse LLM response into Comment objects with improved parsing
         
         Args:
             response: LLM response text
             file_path: Path to the file being reviewed
+            file_change: FileChange object (used for fallback line number calculation)
             
         Returns:
             List of Comment objects
@@ -332,6 +333,19 @@ class ReviewService:
         current_comment = None
         current_line = None
         current_severity = Severity.INFO
+        
+        # Calculate fallback line number (last line of changes or file)
+        fallback_line = None
+        if file_change:
+            # Try to use last line of last hunk (changes)
+            if file_change.hunks:
+                last_hunk = file_change.hunks[-1]
+                fallback_line = last_hunk.new_start + last_hunk.new_count - 1
+            # Fallback to last line of file
+            elif file_change.new_content:
+                file_lines = file_change.new_content.splitlines()
+                if file_lines:
+                    fallback_line = len(file_lines)
 
         for line in lines:
             original_line = line
@@ -342,6 +356,11 @@ class ReviewService:
             line_match = re.search(r"\*\*Line\s+(\d+):\*\*", line, re.IGNORECASE)
             if not line_match:
                 line_match = re.search(r"Line\s+(\d+):", line, re.IGNORECASE)
+            
+            # Check for **Line :** without number (fallback case)
+            empty_line_match = re.search(r"\*\*Line\s*:\*\*", line, re.IGNORECASE)
+            if not empty_line_match:
+                empty_line_match = re.search(r"Line\s*:", line, re.IGNORECASE)
 
             if line_match:
                 current_line = int(line_match.group(1))
@@ -369,6 +388,48 @@ class ReviewService:
                     current_comment = Comment(
                         content=comment_text,
                         line_number=current_line,
+                        file_path=file_path,
+                        severity=current_severity,
+                    )
+                    comments.append(current_comment)
+                continue
+            
+            # Handle **Line :** without number - use fallback
+            elif empty_line_match:
+                # Extract severity if present
+                severity_match = re.search(
+                    r"\[(INFO|WARNING|ERROR)\]", line, re.IGNORECASE
+                )
+                if severity_match:
+                    severity_str = severity_match.group(1).upper()
+                    current_severity = Severity[severity_str]
+                else:
+                    current_severity = Severity.INFO
+
+                # Extract comment text
+                comment_text = line
+                comment_text = re.sub(r"\*\*Line\s*:\*\*", "", comment_text, flags=re.IGNORECASE)
+                comment_text = re.sub(r"Line\s*:", "", comment_text, flags=re.IGNORECASE)
+                comment_text = re.sub(r"\[(INFO|WARNING|ERROR)\]", "", comment_text, flags=re.IGNORECASE)
+                comment_text = comment_text.strip()
+
+                if comment_text:
+                    # Use fallback line number if available
+                    used_line = fallback_line if fallback_line else None
+                    if used_line:
+                        logger.debug(
+                            f"Found **Line :** without number for {file_path}, using fallback line {used_line} "
+                            f"(last line of {'hunk' if file_change and file_change.hunks else 'file'})"
+                        )
+                    else:
+                        logger.warning(
+                            f"Found **Line :** without number for {file_path}, but no fallback line available. "
+                            "Comment will be created without line number."
+                        )
+                    
+                    current_comment = Comment(
+                        content=comment_text,
+                        line_number=used_line,
                         file_path=file_path,
                         severity=current_severity,
                     )
