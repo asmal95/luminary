@@ -323,6 +323,9 @@ class ReviewService:
         Returns:
             List of Comment objects
         """
+        # Debug: log raw response to understand what LLM returns
+        logger.debug(f"Parsing LLM response for {file_path} (length: {len(response)} chars, first 500 chars: {response[:500]!r})")
+        
         comments = []
         lines = response.split("\n")
 
@@ -385,6 +388,7 @@ class ReviewService:
 
         # If no inline comments found, create a general comment
         if not comments and response.strip():
+            logger.debug(f"No inline comments found in LLM response for {file_path}. Response doesn't contain 'Line X:' format. Creating general comment.")
             comments.append(
                 Comment(
                     content=response,
@@ -392,6 +396,8 @@ class ReviewService:
                     severity=Severity.INFO,
                 )
             )
+        else:
+            logger.debug(f"Parsed {len(comments)} inline comments from LLM response for {file_path}")
 
         return comments
 
