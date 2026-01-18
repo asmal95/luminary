@@ -22,6 +22,7 @@ class Comment:
     line_range: Optional[tuple[int, int]] = None  # Line range (start, end) for multi-line
     severity: Severity = Severity.INFO  # Severity level
     file_path: Optional[str] = None  # File path this comment refers to
+    suggestion: Optional[str] = None  # Suggested replacement code (optional)
 
     def __post_init__(self):
         """Validate comment data"""
@@ -47,4 +48,8 @@ class Comment:
             start, end = self.line_range
             location = f"\n\n**Location:** Lines {start}-{end}"
 
-        return f"{severity_prefix}{self.content}{location}"
+        suggestion_block = ""
+        if self.suggestion:
+            suggestion_block = f"\n\n**Suggestion:**\n```\n{self.suggestion}\n```"
+
+        return f"{severity_prefix}{self.content}{location}{suggestion_block}"

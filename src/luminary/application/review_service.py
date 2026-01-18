@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Iterable, List, Optional, Tuple
@@ -314,12 +315,12 @@ class ReviewService:
         return None
 
     def _parse_llm_response(self, response: str, file_path: str, file_change: Optional[FileChange] = None) -> List[Comment]:
-        """Parse LLM response into Comment objects with improved parsing
+        """Parse LLM response into Comment objects from JSON format
         
         Args:
-            response: LLM response text
+            response: LLM response text (should be JSON)
             file_path: Path to the file being reviewed
-            file_change: FileChange object (used for fallback line number calculation)
+            file_change: FileChange object (used for fallback if needed)
             
         Returns:
             List of Comment objects
@@ -328,150 +329,164 @@ class ReviewService:
         logger.debug(f"Parsing LLM response for {file_path} (length: {len(response)} chars, first 500 chars: {response[:500]!r})")
         
         comments = []
-        lines = response.split("\n")
-
-        current_comment = None
-        current_line = None
-        current_severity = Severity.INFO
         
-        # Calculate fallback line number (prefer changed lines, then last line of file)
-        fallback_line = None
-        if file_change:
-            # Prefer first line of first hunk (most likely to be in diff)
-            if file_change.hunks:
-                first_hunk = file_change.hunks[0]
-                # Use first line of new content in hunk
-                fallback_line = first_hunk.new_start
-            # Fallback to last line of file (only if no hunks)
-            elif file_change.new_content:
-                file_lines = file_change.new_content.splitlines()
-                if file_lines:
-                    fallback_line = len(file_lines)
-
-        for line in lines:
-            original_line = line
-            line = line.strip()
-
-            # Check for inline comment with severity
-            # Format: **Line X:** [SEVERITY] comment or **Line X:** comment
-            line_match = re.search(r"\*\*Line\s+(\d+):\*\*", line, re.IGNORECASE)
-            if not line_match:
-                line_match = re.search(r"Line\s+(\d+):", line, re.IGNORECASE)
+        try:
+            # Try to extract JSON from response
+            # Strategy 1: Try to find JSON array directly
+            json_str = response.strip()
+            data = None
             
-            # Check for **Line :** without number (fallback case)
-            empty_line_match = re.search(r"\*\*Line\s*:\*\*", line, re.IGNORECASE)
-            if not empty_line_match:
-                empty_line_match = re.search(r"Line\s*:", line, re.IGNORECASE)
-
-            if line_match:
-                current_line = int(line_match.group(1))
-
-                # Extract severity if present
-                severity_match = re.search(
-                    r"\[(INFO|WARNING|ERROR)\]", line, re.IGNORECASE
-                )
-                if severity_match:
-                    severity_str = severity_match.group(1).upper()
-                    current_severity = Severity[severity_str]
-                else:
-                    current_severity = Severity.INFO
-
-                # Extract comment text (after Line X: and optional [SEVERITY])
-                comment_text = line
-                # Remove "**Line X:**" or "Line X:"
-                comment_text = re.sub(r"\*\*Line\s+\d+:\*\*", "", comment_text, flags=re.IGNORECASE)
-                comment_text = re.sub(r"Line\s+\d+:", "", comment_text, flags=re.IGNORECASE)
-                # Remove [SEVERITY]
-                comment_text = re.sub(r"\[(INFO|WARNING|ERROR)\]", "", comment_text, flags=re.IGNORECASE)
-                comment_text = comment_text.strip()
-
-                if comment_text:
-                    current_comment = Comment(
-                        content=comment_text,
-                        line_number=current_line,
-                        file_path=file_path,
-                        severity=current_severity,
-                    )
-                    comments.append(current_comment)
-                continue
+            # Try to extract JSON from markdown code blocks if present
+            json_match = re.search(r'```(?:json)?\s*(\[.*?\]|{.*?"comments".*?})', response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
             
-            # Handle **Line :** without number - use fallback
-            elif empty_line_match:
-                # Extract severity if present
-                severity_match = re.search(
-                    r"\[(INFO|WARNING|ERROR)\]", line, re.IGNORECASE
-                )
-                if severity_match:
-                    severity_str = severity_match.group(1).upper()
-                    current_severity = Severity[severity_str]
-                else:
-                    current_severity = Severity.INFO
-
-                # Extract comment text
-                comment_text = line
-                comment_text = re.sub(r"\*\*Line\s*:\*\*", "", comment_text, flags=re.IGNORECASE)
-                comment_text = re.sub(r"Line\s*:", "", comment_text, flags=re.IGNORECASE)
-                comment_text = re.sub(r"\[(INFO|WARNING|ERROR)\]", "", comment_text, flags=re.IGNORECASE)
-                comment_text = comment_text.strip()
-
-                if comment_text:
-                    # Use fallback line number if available
-                    used_line = fallback_line if fallback_line else None
-                    if used_line:
-                        logger.debug(
-                            f"Found **Line :** without number for {file_path}, using fallback line {used_line} "
-                            f"(last line of {'hunk' if file_change and file_change.hunks else 'file'})"
-                        )
-                    else:
-                        logger.warning(
-                            f"Found **Line :** without number for {file_path}, but no fallback line available. "
-                            "Comment will be created without line number."
-                        )
-                    
-                    current_comment = Comment(
-                        content=comment_text,
-                        line_number=used_line,
-                        file_path=file_path,
-                        severity=current_severity,
+            # Parse JSON
+            try:
+                data = json.loads(json_str)
+            except json.JSONDecodeError:
+                # Try to find JSON object with "comments" field
+                obj_match = re.search(r'({[^{}]*"comments"[^{}]*})', response, re.DOTALL)
+                if obj_match:
+                    try:
+                        data = json.loads(obj_match.group(1))
+                    except json.JSONDecodeError:
+                        pass
+            
+            if data is None:
+                raise ValueError("Could not parse JSON from response")
+            
+            # Handle both array format and object format with "comments" field
+            if isinstance(data, list):
+                comments_array = data
+                summary_text = None
+            elif isinstance(data, dict):
+                comments_array = data.get("comments", [])
+                summary_text = data.get("summary")
+                if summary_text:
+                    logger.debug(f"Found summary in JSON response for {file_path}")
+                    # Store summary for later extraction (handled separately)
+            else:
+                raise ValueError(f"Unexpected JSON structure: {type(data)}")
+            
+            # Parse comments from JSON array
+            for item in comments_array:
+                if not isinstance(item, dict):
+                    logger.warning(f"Skipping invalid comment item (not a dict): {item}")
+                    continue
+                
+                # Extract fields
+                comment_file = item.get("file", file_path)  # Use file_path as fallback
+                comment_line = item.get("line")
+                comment_message = item.get("message", "")
+                comment_suggestion = item.get("suggestion")  # Can be null or string
+                
+                # Validate file path matches (case-insensitive check for flexibility)
+                if comment_file and comment_file.lower() != file_path.lower():
+                    logger.warning(
+                        f"Comment file path mismatch: expected '{file_path}', got '{comment_file}'. "
+                        f"Using expected path '{file_path}'."
                     )
-                    comments.append(current_comment)
-                continue
-
-            # Check for summary section
-            if "**Summary:**" in line or line.strip().startswith("Summary:"):
-                continue
-
-            # Continue building current comment
-            if current_comment and line:
-                if current_comment.content:
-                    current_comment.content += "\n" + line
-                else:
-                    current_comment.content = line
-
-        # If no inline comments found, create a general comment
-        if not comments and response.strip():
-            logger.debug(f"No inline comments found in LLM response for {file_path}. Response doesn't contain 'Line X:' format. Creating general comment.")
-            comments.append(
-                Comment(
-                    content=response,
+                
+                # Validate line number
+                if comment_line is None:
+                    logger.warning(f"Skipping comment without line number: {item}")
+                    continue
+                
+                try:
+                    line_number = int(comment_line)
+                    if line_number < 1:
+                        logger.warning(f"Invalid line number {line_number}, skipping comment")
+                        continue
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid line number format '{comment_line}', skipping comment")
+                    continue
+                
+                # Determine severity from message (try to infer from keywords)
+                severity = Severity.INFO
+                message_lower = comment_message.lower()
+                if "error" in message_lower or "critical" in message_lower or "bug" in message_lower:
+                    severity = Severity.ERROR
+                elif "warning" in message_lower or "potential" in message_lower:
+                    severity = Severity.WARNING
+                
+                # Create comment
+                comment = Comment(
+                    content=comment_message,
+                    line_number=line_number,
                     file_path=file_path,
-                    severity=Severity.INFO,
+                    severity=severity,
+                    suggestion=comment_suggestion if comment_suggestion else None,
                 )
+                comments.append(comment)
+            
+            logger.debug(f"Parsed {len(comments)} inline comments from JSON response for {file_path}")
+            
+        except json.JSONDecodeError as e:
+            logger.warning(
+                f"Failed to parse JSON response for {file_path}: {e}. "
+                f"Response preview: {response[:200]}... "
+                "Falling back to text parsing or creating general comment."
             )
-        else:
-            logger.debug(f"Parsed {len(comments)} inline comments from LLM response for {file_path}")
-
+            # Fallback: try to create a general comment from response
+            if response.strip():
+                comments.append(
+                    Comment(
+                        content=f"*[Parsing error: expected JSON format]*\n\n{response}",
+                        file_path=file_path,
+                        severity=Severity.INFO,
+                    )
+                )
+        except Exception as e:
+            logger.error(f"Error parsing LLM response for {file_path}: {e}", exc_info=True)
+            # Fallback: create general comment
+            if response.strip():
+                comments.append(
+                    Comment(
+                        content=f"*[Error parsing response]*\n\n{response}",
+                        file_path=file_path,
+                        severity=Severity.INFO,
+                    )
+                )
+        
         return comments
 
     def _extract_summary(self, response: str) -> Optional[str]:
-        """Extract summary section from LLM response
+        """Extract summary section from LLM response (JSON format or legacy text format)
         
         Args:
-            response: LLM response text
+            response: LLM response text (JSON or text)
             
         Returns:
             Summary text or None
         """
+        # Try to extract summary from JSON first
+        try:
+            json_str = response.strip()
+            data = None
+            
+            # Try to extract JSON from markdown code blocks if present
+            json_match = re.search(r'```(?:json)?\s*({.*?})', response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+            
+            try:
+                data = json.loads(json_str)
+            except json.JSONDecodeError:
+                # Try direct parsing
+                try:
+                    data = json.loads(response.strip())
+                except json.JSONDecodeError:
+                    pass
+            
+            if data and isinstance(data, dict) and "summary" in data:
+                summary = data.get("summary")
+                if summary:
+                    return summary
+        except Exception:
+            pass
+        
+        # Fallback to legacy text format parsing
         lines = response.split("\n")
         summary_started = False
         summary_lines = []

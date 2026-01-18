@@ -1,3 +1,4 @@
+import json
 import re
 
 from luminary.application.review_service import ReviewService
@@ -15,12 +16,45 @@ class DummyCountingProvider(LLMProvider):
     def generate(self, prompt: str, **kwargs) -> str:
         self.calls += 1
         # Extract first absolute line number from code block, if present
-        m = re.search(r"```\\n(\\d+):", prompt)
+        m = re.search(r"```\n(\d+):", prompt)
         line_no = int(m.group(1)) if m else 1
-        return (
-            f"**Line {line_no}:** [INFO] Test comment for chunk {self.calls}.\n\n"
-            f"**Summary:** Chunk {self.calls} summary."
-        )
+        
+        # Check if summary is requested (prompt contains "summary only")
+        wants_summary = "summary only" in prompt.lower()
+        wants_inline = "inline comments only" in prompt.lower()
+        
+        # Build JSON response
+        if wants_summary:
+            # Summary only mode - return object with empty comments and summary
+            response = {
+                "comments": [],
+                "summary": f"Chunk {self.calls} summary."
+            }
+        elif wants_inline:
+            # Inline only mode - return array with comments only
+            response = [
+                {
+                    "file": "example.py",
+                    "line": line_no,
+                    "message": f"Test comment for chunk {self.calls}.",
+                    "suggestion": None
+                }
+            ]
+        else:
+            # Both mode - return object with comments and summary
+            response = {
+                "comments": [
+                    {
+                        "file": "example.py",
+                        "line": line_no,
+                        "message": f"Test comment for chunk {self.calls}.",
+                        "suggestion": None
+                    }
+                ],
+                "summary": f"Chunk {self.calls} summary."
+            }
+        
+        return json.dumps(response)
 
 
 def test_review_service_respects_comment_modes():

@@ -25,31 +25,63 @@ class ReviewPromptBuilder:
 
 {context}
 
-Output format rules:
-- If asked for inline comments, use: **Line X:** [SEVERITY] comment text
-  IMPORTANT: X MUST be the actual line number from the code block (e.g., **Line 42:** not **Line :**)
-  You MUST include the line number after "Line" - it cannot be empty!
-- If asked for a summary, use: **Summary:** text
+IMPORTANT: Return ONLY a valid JSON array of inline review comments. Do not include any text outside the JSON array.
 
-EXAMPLES OF CORRECT FORMAT:
-✅ **Line 15:** [WARNING] This method could throw a NullPointerException if input is null.
-✅ **Line 42:** [INFO] Consider extracting this logic into a separate method for better readability.
-✅ **Line 7:** [ERROR] This hardcoded password should be moved to environment variables.
+Format for inline comments:
 
-EXAMPLES OF INCORRECT FORMAT (DO NOT USE):
-❌ **Line :** [WARNING] Comment text  (MISSING LINE NUMBER!)
-❌ Line: Comment text  (MISSING LINE NUMBER AND FORMATTING!)
-❌ Line 15 Comment text  (MISSING COLON!)
+```json
+[
+  {{
+    "file": "<relative_file_path>",
+    "line": <line_number>,
+    "message": "<short review message explaining the issue or suggestion>",
+    "suggestion": "<replacement code block, without markdown, or null if not applicable>"
+  }}
+]
+```
+
+Rules:
+- "file" must exactly match the file path in the diff (case-sensitive).
+- "line" must be an integer from the new version of the file (use line numbers from the code block).
+- "message" must be a short, clear, and actionable explanation (1 sentence preferred).
+- "suggestion" must contain ONLY the code to replace the line(s), without markdown or comments.
+  - Use correct indentation from the file.
+  - If no concrete replacement is appropriate, set "suggestion" to null.
+- Do not include anything outside the JSON array.
+- If no issues are found, return [].
+- Line numbers MUST refer to the line numbers shown in the code block (absolute file line numbers).
+
+Example:
+```json
+[
+  {{
+    "file": "src/main/java/Example.java",
+    "line": 42,
+    "message": "This hardcoded password should be moved to environment variables.",
+    "suggestion": null
+  }},
+  {{
+    "file": "src/main/java/Example.java",
+    "line": 15,
+    "message": "Consider extracting this logic into a separate method for better readability.",
+    "suggestion": "private void processData() {{\n    // extracted logic\n}}"
+  }}
+]
+```
+
+If a summary is requested, provide it in a separate "summary" field after the comments array (but still in JSON format):
+```json
+{{
+  "comments": [...],
+  "summary": "Overall review summary text"
+}}
+```
 
 Guidelines:
 - Be constructive and specific
 - Focus on code quality, potential bugs, and improvements
-- Use severity levels: INFO (suggestions), WARNING (potential issues), ERROR (critical problems)
-- Line numbers MUST refer to the line numbers shown in the code block (absolute file line numbers).
-  The line number must be a positive integer (e.g., 1, 42, 100) - NEVER leave it empty!
-  Look at the line numbers in the code block (format: "42: code here") and use those exact numbers.
 - Provide actionable feedback
-- Each inline comment must have a line number - if you cannot determine the exact line, use the closest line number from the code block
+- Only comment on issues that matter
 
 Be concise but thorough."""
 
@@ -85,11 +117,11 @@ Be concise but thorough."""
 
         # Comment mode
         if options.comment_mode == "inline":
-            context_parts.append("Requested output: inline comments only (no summary).")
+            context_parts.append("Requested output: inline comments only (JSON array, no summary field).")
         elif options.comment_mode == "summary":
-            context_parts.append("Requested output: summary only (no inline comments).")
+            context_parts.append("Requested output: summary only (return empty comments array [] and include summary field).")
         else:
-            context_parts.append("Requested output: inline comments and a summary.")
+            context_parts.append("Requested output: inline comments (JSON array) and a summary (optional summary field in JSON).")
 
         # File content (if available)
         if file_change.new_content:
