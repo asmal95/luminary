@@ -27,6 +27,8 @@ class ReviewPromptBuilder:
 
 Output format rules:
 - If asked for inline comments, use: **Line X:** [SEVERITY] comment text
+  IMPORTANT: X MUST be the actual line number from the code block (e.g., **Line 42:** not **Line :**)
+  You MUST include the line number after "Line" - it cannot be empty!
 - If asked for a summary, use: **Summary:** text
 
 Guidelines:
@@ -34,6 +36,7 @@ Guidelines:
 - Focus on code quality, potential bugs, and improvements
 - Use severity levels: INFO (suggestions), WARNING (potential issues), ERROR (critical problems)
 - Line numbers MUST refer to the line numbers shown in the code block (absolute file line numbers).
+  The line number must be a positive integer (e.g., 1, 42, 100) - NEVER leave it empty!
 - Provide actionable feedback
 
 Be concise but thorough."""
