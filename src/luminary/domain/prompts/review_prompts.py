@@ -25,9 +25,12 @@ class ReviewPromptBuilder:
 
 {context}
 
-CRITICAL: You MUST return ONLY valid JSON. No markdown code blocks, no explanations, no extra text. Just pure JSON.
+CRITICAL REQUIREMENTS:
+1. Return ONLY valid JSON. No markdown code blocks, no explanations, no text outside JSON.
+2. Use line numbers EXACTLY as shown in the code block above (format: "42: code here").
+3. "line" field MUST be a number (integer), NEVER empty, NEVER null.
 
-Required JSON format for inline comments:
+Required JSON format:
 
 [
   {{
@@ -44,29 +47,25 @@ Required JSON format for inline comments:
   }}
 ]
 
-JSON RULES (MUST FOLLOW):
-1. "file" - STRING: exact file path from the diff, must be in double quotes
-2. "line" - INTEGER: line number from the code block (MUST be a number, NOT empty!)
-3. "message" - STRING: review comment, must be in double quotes
-4. "suggestion" - STRING or null: replacement code (without markdown) or null, MUST be quoted string or null (no quotes around null)
-5. ALL strings MUST be in double quotes
-6. ALL commas MUST be present
-7. NO trailing commas
-8. If no issues found, return empty array: []
+Field requirements:
+- "file": STRING in double quotes - exact file path
+- "line": INTEGER (NOT string!) - MUST match line number from code block (e.g., if code shows "42: code", use 42)
+- "message": STRING in double quotes - review comment
+- "suggestion": STRING in double quotes OR null (no quotes) - replacement code or null
 
-VALID examples:
-✅ {{"file": "test.py", "line": 5, "message": "Fix this", "suggestion": null}}
-✅ {{"file": "test.py", "line": 10, "message": "Improve", "suggestion": "code here"}}
+VALID (correct):
+{{"file": "test.py", "line": 5, "message": "Fix this", "suggestion": null}}
+{{"file": "test.py", "line": 10, "message": "Improve", "suggestion": "new code"}}
 
-INVALID examples (DO NOT DO THIS):
-❌ {{"file": "test.py", "line": , "message": "Fix"}}  (MISSING LINE NUMBER!)
-❌ {{"file": "test.py", "line": 5, "message": "Fix", "suggestion":}}  (INVALID NULL!)
-❌ {{"file": "test.py", "line": "5", "message": "Fix"}}  (LINE MUST BE NUMBER!)
+INVALID (never do this):
+{{"file": "test.py", "line": , "message": "Fix"}}  ← MISSING LINE NUMBER!
+{{"file": "test.py", "line": "5", "message": "Fix"}}  ← LINE MUST BE NUMBER, NOT STRING!
+{{"file": "test.py", "line": null, "message": "Fix"}}  ← LINE CANNOT BE NULL!
 
-If summary is requested, use this format:
-{{"comments": [...], "summary": "text"}}
+If summary requested: {{"comments": [...], "summary": "text"}}
+If no issues: []
 
-Return ONLY the JSON. Nothing else."""
+Return ONLY JSON. Nothing else."""
 
     def __init__(self, custom_prompt: Optional[str] = None):
         """Initialize prompt builder
