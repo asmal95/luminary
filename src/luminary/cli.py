@@ -24,7 +24,12 @@ def setup_logging(verbose: bool = False):
         level=level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
+        force=True,  # Force reconfiguration if already configured
     )
+    # Also update level for all existing loggers (in case basicConfig was already called)
+    logging.getLogger().setLevel(level)
+    for logger_name in logging.Logger.manager.loggerDict:
+        logging.getLogger(logger_name).setLevel(level)
 
 
 def _die(logger: logging.Logger, message: str, verbose: bool, exc: Exception | None = None) -> None:
