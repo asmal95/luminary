@@ -530,6 +530,8 @@ class GitLabClient:
                     )
                     return False
                 
+                # Attempt to post inline comment - GitLab may accept comments outside diff
+                # If it fails, we'll fall back to general comment in the exception handler
                 # Build position dict
                 position = {
                     "base_sha": mr.diff_refs["base_sha"],
@@ -600,7 +602,7 @@ class GitLabClient:
                         try:
                             self._retry_api_call(
                                 lambda: mr.notes.create({
-                                    "body": f"*[Comment for line {line_number}]*\n\n{body}"
+                                    "body": f"*[Comment for {file_path}:{line_number}]*\n\n{body}"
                                 })
                             )
                             logger.debug(f"Posted as general comment instead for {file_path}:{line_number}")
