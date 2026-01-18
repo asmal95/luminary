@@ -543,10 +543,73 @@ class GitLabClient:
                     "line_code": line_code,  # Required by GitLab API
                 }
                 
-                self._retry_api_call(
-                    lambda: mr.discussions.create({"body": body, "position": position})
+                # Debug: log full position dict to see what we're sending
+                import json
+                position_debug = {
+                    "base_sha": position["base_sha"],
+                    "start_sha": position["start_sha"],
+                    "head_sha": position["head_sha"],
+                    "old_path": position["old_path"],
+                    "new_path": position["new_path"],
+                    "position_type": position["position_type"],
+                    "new_line": position["new_line"],
+                    "old_line": position["old_line"],
+                    "line_code": line_code[:32] + "..." if len(line_code) > 32 else line_code,
+                    "line_code_length": len(line_code),
+                }
+                logger.debug(
+                    f"Posting inline comment to {file_path}:{line_number} with position: "
+                    f"{json.dumps(position_debug, indent=2)}"
                 )
-                logger.debug(f"Posted inline comment to {file_path}:{line_number}")
+                
+                # Verify line_code is not empty before sending
+                if not line_code or not line_code.strip():
+                    logger.error(
+                        f"line_code is empty for {file_path}:{line_number}! "
+                        f"This should not happen. Skipping comment."
+                    )
+                    return False
+                
+                try:
+                    # Create discussion with position
+                    discussion_data = {"body": body, "position": position}
+                    logger.debug(f"Sending discussion data with line_code length: {len(line_code)}")
+                    
+                    self._retry_api_call(
+                        lambda: mr.discussions.create(discussion_data)
+                    )
+                    logger.debug(f"Posted inline comment to {file_path}:{line_number}")
+                except Exception as e:
+                    # Enhanced error logging for line_code issues
+                    error_msg = str(e)
+                    if "line_code" in error_msg.lower():
+                        logger.error(
+                            f"GitLab rejected line_code for {file_path}:{line_number}. "
+                            f"Line {line_number} may not exist in the MR diff (line_code validation failed). "
+                            f"Calculated line_code: {line_code[:32]}... (length: {len(line_code)}). "
+                            f"Position dict: new_line={position['new_line']}, old_line={position['old_line']}, "
+                            f"new_path={position['new_path']}, old_path={position['old_path']}. "
+                            f"Error: {error_msg[:300]}"
+                        )
+                        # For now, convert to general comment instead of failing completely
+                        logger.warning(
+                            f"Converting inline comment to general comment for {file_path}:{line_number} "
+                            "due to line_code validation failure"
+                        )
+                        # Try posting as general comment instead
+                        try:
+                            self._retry_api_call(
+                                lambda: mr.notes.create({
+                                    "body": f"*[Comment for line {line_number}]*\n\n{body}"
+                                })
+                            )
+                            logger.debug(f"Posted as general comment instead for {file_path}:{line_number}")
+                            return True
+                        except Exception as fallback_error:
+                            logger.error(f"Failed to post as general comment: {fallback_error}")
+                            raise
+                    else:
+                        raise
             else:
                 # General comment
                 self._retry_api_call(lambda: mr.notes.create({"body": body}))

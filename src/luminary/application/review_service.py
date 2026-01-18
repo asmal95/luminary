@@ -334,14 +334,15 @@ class ReviewService:
         current_line = None
         current_severity = Severity.INFO
         
-        # Calculate fallback line number (last line of changes or file)
+        # Calculate fallback line number (prefer changed lines, then last line of file)
         fallback_line = None
         if file_change:
-            # Try to use last line of last hunk (changes)
+            # Prefer first line of first hunk (most likely to be in diff)
             if file_change.hunks:
-                last_hunk = file_change.hunks[-1]
-                fallback_line = last_hunk.new_start + last_hunk.new_count - 1
-            # Fallback to last line of file
+                first_hunk = file_change.hunks[0]
+                # Use first line of new content in hunk
+                fallback_line = first_hunk.new_start
+            # Fallback to last line of file (only if no hunks)
             elif file_change.new_content:
                 file_lines = file_change.new_content.splitlines()
                 if file_lines:
