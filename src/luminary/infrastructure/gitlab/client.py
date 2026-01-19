@@ -2,16 +2,17 @@
 
 import base64
 import hashlib
+import json
 import logging
 import os
+import re
 import time
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, TYPE_CHECKING, Any
 
 import gitlab
 from gitlab.exceptions import GitlabError
 
 from luminary.domain.models.file_change import FileChange, Hunk
-from luminary.infrastructure.diff_parser import parse_unified_diff
 
 if TYPE_CHECKING:
     from gitlab.v4.objects import ProjectMergeRequest
@@ -88,12 +89,9 @@ class GitLabClient:
         logger.info(f"Fetching changes for MR !{merge_request_iid} in {project_id}")
 
         mr = self.get_merge_request(project_id, merge_request_iid)
-
-        # Get MR diff
         changes = self._retry_api_call(lambda: mr.changes())
 
         file_changes = []
-
         for change in changes.get("changes", []):
             try:
                 file_change = self._parse_gitlab_change(change, project_id, mr)
@@ -105,6 +103,182 @@ class GitLabClient:
 
         logger.info(f"Parsed {len(file_changes)} file changes from MR")
         return file_changes
+
+    def _decode_file_object(self, file_obj: Any, file_path: str) -> Optional[str]:
+        """Decode file object from GitLab API to string content
+        
+        Handles different return types from python-gitlab library:
+        - bytes: direct decode
+        - decode_bytes() method: returns bytes, then decode to string
+        - content attribute: Base64-encoded string
+        - decode() method: last resort
+        - data attribute: fallback
+        - str conversion: last resort
+        
+        Args:
+            file_obj: File object from GitLab API
+            file_path: File path (for logging)
+            
+        Returns:
+            Decoded file content as string, or None if decoding fails
+        """
+        if isinstance(file_obj, bytes):
+            return file_obj.decode('utf-8')
+        
+        if hasattr(file_obj, 'decode_bytes'):
+            try:
+                decoded_bytes = file_obj.decode_bytes()
+                return decoded_bytes.decode('utf-8')
+            except Exception as e:
+                logger.warning(f"decode_bytes() failed for {file_path}: {e}")
+                return None
+        
+        if hasattr(file_obj, 'content'):
+            file_content = file_obj.content
+            if isinstance(file_content, bytes):
+                # Try Base64 decode first, fallback to direct decode
+                try:
+                    return base64.b64decode(file_content).decode('utf-8')
+                except Exception:
+                    return file_content.decode('utf-8')
+            elif isinstance(file_content, str):
+                # ProjectFile.content is Base64-encoded string
+                try:
+                    return base64.b64decode(file_content).decode('utf-8')
+                except Exception:
+                    # Fallback: use as-is (shouldn't happen)
+                    return file_content
+            else:
+                return str(file_content) if file_content else None
+        
+        if hasattr(file_obj, 'decode'):
+            try:
+                decoded = file_obj.decode()
+                if isinstance(decoded, bytes):
+                    return decoded.decode('utf-8')
+                elif isinstance(decoded, str):
+                    # Try Base64 decode if it looks like Base64
+                    try:
+                        return base64.b64decode(decoded).decode('utf-8')
+                    except Exception:
+                        return decoded
+                else:
+                    return str(decoded)
+            except Exception as e:
+                logger.warning(f"decode() failed for {file_path}: {e}")
+                return None
+        
+        if hasattr(file_obj, 'data'):
+            file_data = file_obj.data
+            if isinstance(file_data, bytes):
+                return file_data.decode('utf-8')
+            return str(file_data)
+        
+        # Last resort: convert to string
+        return str(file_obj) if file_obj else None
+
+    def _get_file_content_via_repository_blob(
+        self, project: Any, file_path: str, ref: str
+    ) -> Optional[str]:
+        """Get file content via repository_blob API
+        
+        Args:
+            project: GitLab project object
+            file_path: File path
+            ref: Git reference (branch or commit SHA)
+            
+        Returns:
+            File content as string, or None if not available
+        """
+        if not hasattr(project, 'repository_blob'):
+            return None
+        
+        try:
+            blob = self._retry_api_call(lambda: project.repository_blob(file_path, ref=ref))
+            if blob:
+                if isinstance(blob, bytes):
+                    return blob.decode('utf-8')
+                return str(blob)
+        except (AttributeError, GitlabError) as e:
+            status_code = getattr(e, 'response_code', None) if isinstance(e, GitlabError) else None
+            if status_code == 404:
+                logger.debug(f"File {file_path} not found in ref {ref}")
+            else:
+                logger.debug(f"repository_blob failed for {file_path}@{ref}: {e}")
+        except Exception as e:
+            logger.debug(f"repository_blob exception for {file_path}@{ref}: {e}")
+        
+        return None
+
+    def _get_file_content_via_files_get(
+        self, project: Any, file_path: str, ref: str
+    ) -> Optional[str]:
+        """Get file content via files.get API
+        
+        Args:
+            project: GitLab project object
+            file_path: File path
+            ref: Git reference (branch or commit SHA)
+            
+        Returns:
+            File content as string, or None if not available
+        """
+        try:
+            file_obj = self._retry_api_call(lambda: project.files.get(file_path, ref=ref))
+            content = self._decode_file_object(file_obj, file_path)
+            
+            if content and content.strip():
+                logger.debug(f"Successfully fetched content via files.get for {file_path} ({len(content)} chars)")
+                return content
+            else:
+                logger.warning(f"files.get returned empty content for {file_path}")
+        except Exception as e:
+            logger.warning(f"Could not fetch content via files.get for {file_path}: {e}", exc_info=True)
+        
+        return None
+
+    def _get_file_content(
+        self, project_id: str, file_path: str, mr: "ProjectMergeRequest"
+    ) -> Optional[str]:
+        """Get file content using multiple strategies
+        
+        Tries repository_blob first, then falls back to files.get.
+        Tries multiple refs (source_branch, head_sha).
+        
+        Args:
+            project_id: Project ID or path
+            file_path: File path
+            mr: Merge request object
+            
+        Returns:
+            File content as string, or None if not available
+        """
+        try:
+            project = self._retry_api_call(lambda: self.gl.projects.get(project_id))
+            
+            refs_to_try = [
+                mr.source_branch,
+                mr.diff_refs.get("head_sha"),
+            ]
+            
+            # Try repository_blob first (more reliable)
+            for ref in refs_to_try:
+                if not ref:
+                    continue
+                content = self._get_file_content_via_repository_blob(project, file_path, ref)
+                if content:
+                    logger.debug(f"Successfully fetched content via repository_blob for {file_path} ({len(content)} chars)")
+                    return content
+            
+            # Fallback to files.get
+            if mr.source_branch:
+                content = self._get_file_content_via_files_get(project, file_path, mr.source_branch)
+                if content:
+                    return content
+        except Exception as e:
+            logger.warning(f"Could not fetch content for {file_path}: {e}")
+        
+        return None
 
     def _parse_gitlab_change(
         self, change: Dict, project_id: str, mr: "ProjectMergeRequest"
@@ -142,115 +316,7 @@ class GitLabClient:
         # Get file content if available (for new/modified files)
         new_content = None
         if new_path and status != "deleted":
-            try:
-                # Get project separately (mr.project may not be available in some GitLab versions)
-                project = self._retry_api_call(lambda: self.gl.projects.get(project_id))
-                
-                # Try repository_blob API first (more reliable - returns raw file content)
-                refs_to_try = [
-                    mr.source_branch,  # MR source branch
-                    mr.diff_refs.get("head_sha"),  # Head commit SHA
-                ]
-                
-                for ref in refs_to_try:
-                    if not ref:
-                        continue
-                    try:
-                        # Try repository_blob API (returns raw file content as bytes)
-                        # Check if method exists first (may not be available in all python-gitlab versions)
-                        if hasattr(project, 'repository_blob'):
-                            blob = self._retry_api_call(
-                                lambda: project.repository_blob(new_path, ref=ref)
-                            )
-                            if blob:
-                                if isinstance(blob, bytes):
-                                    new_content = blob.decode('utf-8')
-                                else:
-                                    new_content = str(blob)
-                                logger.debug(f"Successfully fetched content via repository_blob for {new_path} ({len(new_content)} chars)")
-                                break
-                        else:
-                            logger.debug(f"repository_blob method not available, trying files.get")
-                            break  # Skip to files.get fallback
-                    except (AttributeError, GitlabError) as e:
-                        status_code = getattr(e, 'response_code', None) if isinstance(e, GitlabError) else None
-                        if status_code == 404:
-                            logger.debug(f"File {new_path} not found in ref {ref}, trying next ref")
-                        else:
-                            logger.debug(f"repository_blob failed for {new_path}@{ref}: {e}, trying files.get")
-                        continue
-                    except Exception as e:
-                        logger.debug(f"repository_blob exception for {new_path}@{ref}: {e}, trying files.get")
-                        continue
-                
-                # Fallback to files.get API if repository_blob didn't work
-                if not new_content:
-                    try:
-                        file_obj = self._retry_api_call(
-                            lambda: project.files.get(new_path, ref=mr.source_branch)
-                        )
-                        
-                        # Debug: log what we got
-                        logger.debug(f"files.get returned type: {type(file_obj)}, has decode_bytes: {hasattr(file_obj, 'decode_bytes')}, has content: {hasattr(file_obj, 'content')}, has decode: {hasattr(file_obj, 'decode')}")
-                        
-                        # Handle different return types from python-gitlab
-                        # ProjectFile.decode() doesn't take arguments - it just decodes the file content
-                        if isinstance(file_obj, bytes):
-                            new_content = file_obj.decode('utf-8')
-                        elif hasattr(file_obj, 'decode_bytes'):
-                            # decode_bytes() returns bytes, then we decode to string
-                            try:
-                                decoded_bytes = file_obj.decode_bytes()
-                                new_content = decoded_bytes.decode('utf-8')
-                            except Exception as e:
-                                logger.warning(f"decode_bytes() failed for {new_path}: {e}")
-                                new_content = None
-                        elif hasattr(file_obj, 'content'):
-                            # ProjectFile.content is Base64-encoded string in python-gitlab!
-                            file_content = file_obj.content
-                            if isinstance(file_content, bytes):
-                                # If bytes, try to decode as Base64 first
-                                try:
-                                    decoded_bytes = base64.b64decode(file_content)
-                                    new_content = decoded_bytes.decode('utf-8')
-                                except Exception:
-                                    # If not Base64, try direct decode
-                                    new_content = file_content.decode('utf-8')
-                            elif isinstance(file_content, str):
-                                # ProjectFile.content is Base64-encoded - decode it!
-                                try:
-                                    decoded_bytes = base64.b64decode(file_content)
-                                    new_content = decoded_bytes.decode('utf-8')
-                                except Exception:
-                                    # If decode fails, use as-is (shouldn't happen, but just in case)
-                                    new_content = file_content
-                            else:
-                                new_content = str(file_content) if file_content else None
-                        elif hasattr(file_obj, 'decode'):
-                            # decode() without arguments - try calling it directly
-                            try:
-                                decoded = file_obj.decode()  # No arguments!
-                                if isinstance(decoded, bytes):
-                                    new_content = decoded.decode('utf-8')
-                                elif isinstance(decoded, str):
-                                    new_content = decoded
-                                else:
-                                    new_content = str(decoded)
-                            except Exception as e:
-                                logger.warning(f"decode() failed for {new_path}: {e}")
-                                new_content = None
-                        else:
-                            # Last resort - convert to string
-                            new_content = str(file_obj) if file_obj else None
-                        
-                        if new_content and len(new_content.strip()) > 0:
-                            logger.debug(f"Successfully fetched content via files.get for {new_path} ({len(new_content)} chars)")
-                        else:
-                            logger.warning(f"files.get returned empty content for {new_path}")
-                    except Exception as e:
-                        logger.warning(f"Could not fetch content via files.get for {new_path}: {e}", exc_info=True)
-            except Exception as e:
-                logger.warning(f"Could not fetch content for {new_path}: {e}")
+            new_content = self._get_file_content(project_id, new_path, mr)
 
         return FileChange(
             path=new_path or old_path,
@@ -274,7 +340,6 @@ class GitLabClient:
 
         hunks = []
         lines = diff.split("\n")
-
         current_hunk = None
         hunk_lines = []
 
@@ -287,8 +352,6 @@ class GitLabClient:
                     hunks.append(current_hunk)
 
                 # Parse hunk header
-                import re
-
                 match = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
                 if match:
                     old_start = int(match.group(1))
@@ -333,89 +396,29 @@ class GitLabClient:
         try:
             project = self._retry_api_call(lambda: self.gl.projects.get(project_id))
             
-            # Try multiple strategies to get file content
-            content = None
             refs_to_try = [
-                mr.source_branch,  # MR source branch
-                mr.diff_refs.get("head_sha"),  # Head commit SHA
+                mr.source_branch,
+                mr.diff_refs.get("head_sha"),
             ]
             
+            content = None
             for ref in refs_to_try:
                 if not ref:
                     continue
                 try:
-                    # Try to get file content - don't retry on 404
+                    # files.get is called directly (not through retry) in _calculate_line_code
                     file_obj = project.files.get(file_path, ref=ref)
-                    
-                    # Handle different return types from python-gitlab
-                    if isinstance(file_obj, bytes):
-                        content = file_obj.decode('utf-8')
-                    elif hasattr(file_obj, 'decode_bytes'):
-                        # decode_bytes() is the correct method - returns bytes
-                        try:
-                            decoded_bytes = file_obj.decode_bytes()
-                            content = decoded_bytes.decode('utf-8')
-                        except Exception as e:
-                            logger.debug(f"decode_bytes() failed: {e}")
-                            raise
-                    elif hasattr(file_obj, 'content'):
-                        # ProjectFile.content is Base64-encoded string in python-gitlab
-                        file_content = file_obj.content
-                        if isinstance(file_content, bytes):
-                            try:
-                                decoded_bytes = base64.b64decode(file_content)
-                                content = decoded_bytes.decode('utf-8')
-                            except Exception:
-                                content = file_content.decode('utf-8')
-                        elif isinstance(file_content, str):
-                            # Decode Base64 string
-                            try:
-                                decoded_bytes = base64.b64decode(file_content)
-                                content = decoded_bytes.decode('utf-8')
-                            except Exception:
-                                content = file_content  # Fallback
-                        else:
-                            content = str(file_content)
-                    elif hasattr(file_obj, 'decode'):
-                        # decode() without arguments - LAST RESORT (may not work correctly)
-                        try:
-                            decoded_result = file_obj.decode()  # No arguments!
-                            if isinstance(decoded_result, bytes):
-                                content = decoded_result.decode('utf-8')
-                            elif isinstance(decoded_result, str):
-                                # decode() might return Base64 - try to decode
-                                try:
-                                    decoded_bytes = base64.b64decode(decoded_result)
-                                    content = decoded_bytes.decode('utf-8')
-                                except Exception:
-                                    content = decoded_result
-                            else:
-                                content = str(decoded_result)
-                        except Exception as e:
-                            logger.debug(f"decode() failed: {e}")
-                            raise
-                    elif hasattr(file_obj, 'data'):
-                        # ProjectFile object with data attribute
-                        file_data = file_obj.data
-                        if isinstance(file_data, bytes):
-                            content = file_data.decode('utf-8')
-                        else:
-                            content = str(file_data)
-                    else:
-                        content = str(file_obj)
-                    
+                    content = self._decode_file_object(file_obj, file_path)
                     if content:
-                        break  # Successfully got content
+                        break
                 except GitlabError as e:
-                    # Check if it's a 404 error (expected for new files or files not in ref)
-                    status_code = e.response_code if hasattr(e, "response_code") else None
+                    status_code = getattr(e, "response_code", None) if hasattr(e, "response_code") else None
                     if status_code == 404:
                         logger.debug(f"File {file_path} not found in ref {ref} (may be new file)")
                     else:
                         logger.debug(f"Could not get file {file_path} from ref {ref}: {e}")
                     continue
                 except Exception as e:
-                    # Other exceptions (not GitlabError) - log at debug level
                     logger.debug(f"Could not get file {file_path} from ref {ref}: {e}")
                     continue
             
@@ -423,33 +426,177 @@ class GitLabClient:
                 logger.debug(f"Empty content for {file_path} after trying all refs")
                 return None
             
-            # Get the specific line (line_number is 1-based)
-            # Use splitlines() to handle different line endings (\n, \r\n, \r)
+            # Validate line number
             lines = content.splitlines()
-            if 1 <= line_number <= len(lines):
-                # GitLab line_code format: <SHA-1 of file>_<old_line>_<new_line>
-                # SHA-1 should be computed from the file path (not content)
-                # For same line in old and new version: <SHA>_<line>_<line>
-                # For new lines: <SHA>_null_<line> or <SHA>__<line>
-                # For deleted lines: <SHA>_<line>_null or <SHA>_<line>_
-                
-                # Compute SHA-1 of file path (GitLab uses file path for line_code)
-                file_path_bytes = file_path.encode('utf-8')
-                file_sha1 = hashlib.sha1(file_path_bytes).hexdigest()
-                
-                # For new lines, use new_line for both old and new (or null for old)
-                # Since we're posting to new_line, use that for both
-                old_line_num = line_number  # For unchanged lines
-                new_line_num = line_number
-                
-                # Format: SHA1_old_line_new_line
-                line_code = f"{file_sha1}_{old_line_num}_{new_line_num}"
-                return line_code
-            else:
-                logger.debug(f"Line {line_number} out of range for {file_path} (file has {len(lines)} lines, content: {len(content)} chars)")
+            if not (1 <= line_number <= len(lines)):
+                logger.debug(f"Line {line_number} out of range for {file_path} (file has {len(lines)} lines)")
+                return None
+            
+            # GitLab line_code format: <SHA-1 of file path>_<old_line>_<new_line>
+            file_sha1 = hashlib.sha1(file_path.encode('utf-8')).hexdigest()
+            line_code = f"{file_sha1}_{line_number}_{line_number}"
+            return line_code
         except Exception as e:
             logger.debug(f"Could not calculate line_code for {file_path}:{line_number}: {e}")
         return None
+
+    def _calculate_line_code_from_content(
+        self, file_path: str, line_number: int, file_content: str
+    ) -> Optional[str]:
+        """Calculate line_code from provided file content
+        
+        Args:
+            file_path: File path
+            line_number: Line number (1-based)
+            file_content: File content (may be Base64-encoded)
+            
+        Returns:
+            line_code hash or None if cannot calculate
+        """
+        try:
+            # Try to decode Base64 if it looks like Base64
+            decoded_content = self._maybe_decode_base64(file_content, file_path)
+            
+            lines = decoded_content.splitlines()
+            if not (1 <= line_number <= len(lines)):
+                preview = decoded_content[:200].replace('\n', '\\n').replace('\r', '\\r')
+                logger.warning(
+                    f"Line {line_number} out of range for {file_path} "
+                    f"(file has {len(lines)} lines, content length: {len(decoded_content)} chars). "
+                    f"Content preview: {preview[:100]}..."
+                )
+                return None
+            
+            # GitLab line_code format: <SHA-1 of file path>_<old_line>_<new_line>
+            file_sha1 = hashlib.sha1(file_path.encode('utf-8')).hexdigest()
+            line_code = f"{file_sha1}_{line_number}_{line_number}"
+            logger.debug(f"Successfully calculated line_code from file_content: {line_code}")
+            return line_code
+        except Exception as e:
+            logger.warning(f"Could not calculate line_code from provided content: {e}", exc_info=True)
+        return None
+
+    def _maybe_decode_base64(self, content: str, file_path: str) -> str:
+        """Try to decode Base64 content if it looks like Base64
+        
+        Args:
+            content: Content string (may be Base64-encoded)
+            file_path: File path (for logging)
+            
+        Returns:
+            Decoded content (or original if not Base64)
+        """
+        if not isinstance(content, str) or len(content) <= 50:
+            return content
+        
+        # Check if it looks like Base64 (only base64 chars, no newlines for short strings)
+        is_likely_base64 = (
+            all(c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\n' for c in content[:100])
+            and '\n' not in content[:200]  # Base64 usually has no newlines in content
+        )
+        
+        if is_likely_base64:
+            try:
+                decoded_bytes = base64.b64decode(content)
+                decoded_content = decoded_bytes.decode('utf-8')
+                logger.debug(f"Decoded Base64 content for {file_path} ({len(decoded_content)} chars after decode)")
+                return decoded_content
+            except Exception as e:
+                logger.debug(f"Content doesn't seem to be Base64: {e}, using as-is")
+        
+        return content
+
+    def _post_inline_comment(
+        self,
+        mr: "ProjectMergeRequest",
+        project_id: str,
+        body: str,
+        file_path: str,
+        line_number: int,
+        line_type: str,
+        file_content: Optional[str] = None,
+    ) -> bool:
+        """Post inline comment to merge request
+        
+        Args:
+            mr: Merge request object
+            project_id: Project ID or path
+            body: Comment body
+            file_path: File path
+            line_number: Line number
+            line_type: Line type ("new" or "old")
+            file_content: Optional file content (may be Base64-encoded)
+            
+        Returns:
+            True if comment was posted successfully
+        """
+        # Calculate line_code
+        line_code = None
+        if file_content:
+            logger.debug(
+                f"Calculating line_code for {file_path}:{line_number} "
+                f"from file_content ({len(file_content)} chars)"
+            )
+            line_code = self._calculate_line_code_from_content(file_path, line_number, file_content)
+        
+        if not line_code:
+            logger.debug(f"Attempting to calculate line_code via API for {file_path}:{line_number}")
+            line_code = self._calculate_line_code(project_id, file_path, line_number, mr)
+        
+        if not line_code or not line_code.strip():
+            logger.warning(
+                f"Could not calculate line_code for {file_path}:{line_number}. "
+                f"file_content provided: {file_content is not None}, "
+                f"file_content length: {len(file_content) if file_content else 0}. "
+                "Skipping inline comment (GitLab requires line_code)."
+            )
+            return False
+        
+        # Build position dict
+        position = {
+            "base_sha": mr.diff_refs["base_sha"],
+            "start_sha": mr.diff_refs["start_sha"],
+            "head_sha": mr.diff_refs["head_sha"],
+            "old_path": file_path,
+            "new_path": file_path,
+            "position_type": "text",
+            "new_line": line_number if line_type == "new" else None,
+            "old_line": line_number if line_type == "old" else None,
+            "line_code": line_code,
+        }
+        
+        logger.debug(
+            f"Posting inline comment to {file_path}:{line_number} with line_code length: {len(line_code)}"
+        )
+        
+        try:
+            # Create discussion with position
+            discussion_data = {"body": body, "position": position}
+            self._retry_api_call(lambda: mr.discussions.create(discussion_data))
+            logger.debug(f"Posted inline comment to {file_path}:{line_number}")
+            return True
+        except Exception as e:
+            error_msg = str(e)
+            if "line_code" in error_msg.lower():
+                # GitLab rejects line_code for lines outside the MR diff
+                # Fallback to general comment
+                logger.debug(
+                    f"GitLab rejected inline comment for {file_path}:{line_number} "
+                    f"(line outside diff or line_code validation failed). "
+                    f"Falling back to general comment. Error: {error_msg[:200]}"
+                )
+                try:
+                    self._retry_api_call(
+                        lambda: mr.notes.create({
+                            "body": f"*[Comment for {file_path}:{line_number}]*\n\n{body}"
+                        })
+                    )
+                    logger.debug(f"Posted as general comment for {file_path}:{line_number}")
+                    return True
+                except Exception as fallback_error:
+                    logger.error(f"Failed to post as general comment: {fallback_error}")
+                    raise
+            raise
 
     def post_comment(
         self,
@@ -470,6 +617,7 @@ class GitLabClient:
             line_number: Line number for inline comment (None for general comment)
             file_path: File path for inline comment
             line_type: Line type ("new" or "old") for inline comment
+            file_content: Optional file content (may be Base64-encoded)
             
         Returns:
             True if comment was posted successfully
@@ -478,159 +626,15 @@ class GitLabClient:
             mr = self.get_merge_request(project_id, merge_request_iid)
 
             if line_number and file_path:
-                # Inline comment - need to calculate line_code for GitLab API
-                # line_code is required by GitLab API for inline comments
-                # Try using provided file_content first, then fall back to fetching from API
-                line_code = None
-                if file_content:
-                    try:
-                        # Check if file_content is Base64-encoded (common with GitLab API)
-                        # Base64 strings typically don't have newlines and are longer than decoded content
-                        decoded_content = file_content
-                        if isinstance(file_content, str) and len(file_content) > 0:
-                            # Check if it looks like Base64 (only base64 chars, no newlines for short strings)
-                            is_likely_base64 = (
-                                all(c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\n' for c in file_content[:100])
-                                and '\n' not in file_content[:200]  # Base64 usually has no newlines in content
-                                and len(file_content) > 50  # Small files might not be Base64
-                            )
-                            
-                            if is_likely_base64:
-                                try:
-                                    decoded_bytes = base64.b64decode(file_content)
-                                    decoded_content = decoded_bytes.decode('utf-8')
-                                    logger.debug(f"Decoded Base64 content for {file_path} ({len(decoded_content)} chars after decode)")
-                                except Exception as e:
-                                    logger.debug(f"Content doesn't seem to be Base64: {e}, using as-is")
-                                    decoded_content = file_content
-                        
-                        # Use splitlines() to handle different line endings
-                        lines = decoded_content.splitlines()
-                        logger.debug(
-                            f"Calculating line_code for {file_path}:{line_number} "
-                            f"from file_content ({len(lines)} lines total, {len(decoded_content)} chars after decode)"
-                        )
-                        if 1 <= line_number <= len(lines):
-                            # GitLab line_code format: <SHA-1 of file>_<old_line>_<new_line>
-                            # Compute SHA-1 of file path (GitLab uses file path for line_code)
-                            file_path_bytes = file_path.encode('utf-8')
-                            file_sha1 = hashlib.sha1(file_path_bytes).hexdigest()
-                            
-                            # For new lines, use new_line for both old and new
-                            # Format: SHA1_old_line_new_line
-                            line_code = f"{file_sha1}_{line_number}_{line_number}"
-                            logger.debug(f"Successfully calculated line_code from file_content: {line_code}")
-                        else:
-                            # Debug: show first 200 chars to understand the structure
-                            preview = decoded_content[:200].replace('\n', '\\n').replace('\r', '\\r')
-                            logger.warning(
-                                f"Line {line_number} out of range for {file_path} "
-                                f"(file has {len(lines)} lines, content length: {len(decoded_content)} chars after decode). "
-                                f"Content preview: {preview[:100]}..."
-                            )
-                    except Exception as e:
-                        logger.warning(f"Could not calculate line_code from provided content: {e}", exc_info=True)
-                else:
-                    logger.debug(f"No file_content provided for {file_path}, will try API")
-                
-                # Fall back to API if file_content not available or failed
-                if not line_code:
-                    logger.debug(f"Attempting to calculate line_code via API for {file_path}:{line_number}")
-                    line_code = self._calculate_line_code(
-                        project_id, file_path, line_number, mr
-                    )
-                
-                if not line_code:
-                    logger.warning(
-                        f"Could not calculate line_code for {file_path}:{line_number}. "
-                        f"file_content provided: {file_content is not None}, "
-                        f"file_content length: {len(file_content) if file_content else 0}. "
-                        "Skipping inline comment (GitLab requires line_code)."
-                    )
-                    return False
-                
-                # Attempt to post inline comment - GitLab may accept comments outside diff
-                # If it fails, we'll fall back to general comment in the exception handler
-                # Build position dict
-                position = {
-                    "base_sha": mr.diff_refs["base_sha"],
-                    "start_sha": mr.diff_refs["start_sha"],
-                    "head_sha": mr.diff_refs["head_sha"],
-                    "old_path": file_path,
-                    "new_path": file_path,
-                    "position_type": "text",
-                    "new_line": line_number if line_type == "new" else None,
-                    "old_line": line_number if line_type == "old" else None,
-                    "line_code": line_code,  # Required by GitLab API
-                }
-                
-                # Debug: log full position dict to see what we're sending
-                import json
-                position_debug = {
-                    "base_sha": position["base_sha"],
-                    "start_sha": position["start_sha"],
-                    "head_sha": position["head_sha"],
-                    "old_path": position["old_path"],
-                    "new_path": position["new_path"],
-                    "position_type": position["position_type"],
-                    "new_line": position["new_line"],
-                    "old_line": position["old_line"],
-                    "line_code": line_code[:32] + "..." if len(line_code) > 32 else line_code,
-                    "line_code_length": len(line_code),
-                }
-                logger.debug(
-                    f"Posting inline comment to {file_path}:{line_number} with position: "
-                    f"{json.dumps(position_debug, indent=2)}"
+                # Inline comment
+                return self._post_inline_comment(
+                    mr, project_id, body, file_path, line_number, line_type, file_content
                 )
-                
-                # Verify line_code is not empty before sending
-                if not line_code or not line_code.strip():
-                    logger.error(
-                        f"line_code is empty for {file_path}:{line_number}! "
-                        f"This should not happen. Skipping comment."
-                    )
-                    return False
-                
-                try:
-                    # Create discussion with position
-                    discussion_data = {"body": body, "position": position}
-                    logger.debug(f"Sending discussion data with line_code length: {len(line_code)}")
-                    
-                    self._retry_api_call(
-                        lambda: mr.discussions.create(discussion_data)
-                    )
-                    logger.debug(f"Posted inline comment to {file_path}:{line_number}")
-                except Exception as e:
-                    # Enhanced error logging for line_code issues
-                    error_msg = str(e)
-                    if "line_code" in error_msg.lower():
-                        # GitLab rejects line_code for lines outside the MR diff
-                        # This is expected - fallback to general comment is normal behavior
-                        logger.debug(
-                            f"GitLab rejected inline comment for {file_path}:{line_number} "
-                            f"(line outside diff or line_code validation failed). "
-                            f"Falling back to general comment. Error: {error_msg[:200]}"
-                        )
-                        # Convert to general comment instead of failing completely
-                        try:
-                            self._retry_api_call(
-                                lambda: mr.notes.create({
-                                    "body": f"*[Comment for {file_path}:{line_number}]*\n\n{body}"
-                                })
-                            )
-                            logger.debug(f"Posted as general comment for {file_path}:{line_number}")
-                            return True
-                        except Exception as fallback_error:
-                            logger.error(f"Failed to post as general comment: {fallback_error}")
-                            raise
-                    else:
-                        raise
             else:
                 # General comment
                 self._retry_api_call(lambda: mr.notes.create({"body": body}))
                 logger.debug("Posted general comment to MR")
-
-            return True
+                return True
 
         except Exception as e:
             logger.error(f"Failed to post comment: {e}", exc_info=True)
@@ -650,14 +654,11 @@ class GitLabClient:
         Raises:
             RuntimeError: If all retries failed
         """
-        last_error = None
-
         for attempt in range(self.max_retries):
             try:
                 return func(*args, **kwargs)
             except GitlabError as e:
-                last_error = e
-                status_code = e.response_code if hasattr(e, "response_code") else None
+                status_code = getattr(e, "response_code", None) if hasattr(e, "response_code") else None
 
                 # Don't retry on auth errors
                 if status_code in (401, 403):
@@ -665,12 +666,11 @@ class GitLabClient:
                     raise RuntimeError(f"GitLab API authentication failed: {e}") from e
 
                 # Don't retry on client errors (except rate limits)
-                # 404 is expected for new files, so log at debug level instead of error
                 if status_code and 400 <= status_code < 500 and status_code != 429:
                     if status_code == 404:
                         logger.debug(f"GitLab API 404 (file not found): {e}")
-                        raise RuntimeError(f"GitLab API client error: {e}") from e
-                    logger.error(f"GitLab API client error: {e}")
+                    else:
+                        logger.error(f"GitLab API client error: {e}")
                     raise RuntimeError(f"GitLab API client error: {e}") from e
 
                 # Retry on rate limits and server errors
@@ -682,15 +682,12 @@ class GitLabClient:
                     )
                     time.sleep(delay)
                 else:
-                    logger.error(
-                        f"GitLab API failed after {self.max_retries} attempts: {e}"
-                    )
+                    logger.error(f"GitLab API failed after {self.max_retries} attempts: {e}")
                     raise RuntimeError(
                         f"GitLab API request failed after {self.max_retries} attempts: {e}"
                     ) from e
 
             except Exception as e:
-                last_error = e
                 if attempt < self.max_retries - 1:
                     delay = self.retry_delay * (2 ** attempt)
                     logger.warning(
@@ -699,11 +696,10 @@ class GitLabClient:
                     )
                     time.sleep(delay)
                 else:
-                    logger.error(
-                        f"GitLab API error after {self.max_retries} attempts: {e}"
-                    )
+                    logger.error(f"GitLab API error after {self.max_retries} attempts: {e}")
                     raise RuntimeError(
                         f"GitLab API error after {self.max_retries} attempts: {e}"
                     ) from e
 
-        raise RuntimeError(f"GitLab API request failed: {last_error}") from last_error
+        # This should never be reached, but just in case
+        raise RuntimeError("GitLab API request failed: unexpected error")
