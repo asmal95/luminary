@@ -182,6 +182,9 @@ class GitLabClient:
     ) -> Optional[str]:
         """Get file content via repository_blob API
         
+        Uses retry for transient errors (500, 429), but NOT for 404 (file not found).
+        404 is a normal response indicating the file doesn't exist in that ref.
+        
         Args:
             project: GitLab project object
             file_path: File path
@@ -193,19 +196,31 @@ class GitLabClient:
         if not hasattr(project, 'repository_blob'):
             return None
         
+        # Try direct call first to catch 404 early (no retry needed for 404)
         try:
-            blob = self._retry_api_call(lambda: project.repository_blob(file_path, ref=ref))
+            blob = project.repository_blob(file_path, ref=ref)
             if blob:
                 if isinstance(blob, bytes):
                     return blob.decode('utf-8')
                 return str(blob)
-        except (AttributeError, GitlabError) as e:
-            status_code = getattr(e, 'response_code', None) if isinstance(e, GitlabError) else None
+        except GitlabError as e:
+            status_code = getattr(e, 'response_code', None)
             if status_code == 404:
-                logger.debug(f"File {file_path} not found in ref {ref}")
-            else:
-                logger.debug(f"repository_blob failed for {file_path}@{ref}: {e}")
-        except Exception as e:
+                # 404 is normal - file may not exist in this ref, no retry needed
+                logger.debug(f"File {file_path} not found in ref {ref} via repository_blob")
+                return None
+            # For other errors, use retry logic
+            try:
+                # Retry for transient errors (500, 429, network issues)
+                blob = self._retry_api_call(lambda: project.repository_blob(file_path, ref=ref))
+                if blob:
+                    if isinstance(blob, bytes):
+                        return blob.decode('utf-8')
+                    return str(blob)
+            except RuntimeError:
+                # Retry exhausted or non-retryable error (401, 403, etc.)
+                logger.debug(f"repository_blob failed for {file_path}@{ref} after retries: {e}")
+        except (AttributeError, Exception) as e:
             logger.debug(f"repository_blob exception for {file_path}@{ref}: {e}")
         
         return None
@@ -243,7 +258,7 @@ class GitLabClient:
         """Get file content using multiple strategies
         
         Tries repository_blob first, then falls back to files.get.
-        Tries multiple refs (source_branch, head_sha).
+        Optimized to avoid unnecessary API calls when repository_blob doesn't work.
         
         Args:
             project_id: Project ID or path
@@ -256,23 +271,29 @@ class GitLabClient:
         try:
             project = self._retry_api_call(lambda: self.gl.projects.get(project_id))
             
-            refs_to_try = [
-                mr.source_branch,
-                mr.diff_refs.get("head_sha"),
-            ]
-            
-            # Try repository_blob first (more reliable)
-            for ref in refs_to_try:
-                if not ref:
-                    continue
-                content = self._get_file_content_via_repository_blob(project, file_path, ref)
+            # Try repository_blob with source_branch first (most common case)
+            if mr.source_branch:
+                content = self._get_file_content_via_repository_blob(project, file_path, mr.source_branch)
                 if content:
                     logger.debug(f"Successfully fetched content via repository_blob for {file_path} ({len(content)} chars)")
                     return content
             
-            # Fallback to files.get
+            # Fallback to files.get (more reliable, works even if repository_blob doesn't)
             if mr.source_branch:
                 content = self._get_file_content_via_files_get(project, file_path, mr.source_branch)
+                if content:
+                    return content
+            
+            # Last resort: try repository_blob with head_sha if different from source_branch
+            head_sha = mr.diff_refs.get("head_sha")
+            if head_sha and head_sha != mr.source_branch:
+                content = self._get_file_content_via_repository_blob(project, file_path, head_sha)
+                if content:
+                    logger.debug(f"Successfully fetched content via repository_blob (head_sha) for {file_path} ({len(content)} chars)")
+                    return content
+                
+                # Try files.get with head_sha as last resort
+                content = self._get_file_content_via_files_get(project, file_path, head_sha)
                 if content:
                     return content
         except Exception as e:
