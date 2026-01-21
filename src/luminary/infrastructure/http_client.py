@@ -6,12 +6,12 @@ We keep HTTP logic centralized to avoid divergence across providers.
 from __future__ import annotations
 
 import logging
-import random
-import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 import requests
+
+from luminary.infrastructure.retry import call_with_retry, _should_retry_http_error
 
 logger = logging.getLogger(__name__)
 
@@ -79,17 +79,6 @@ def retry_config_from_dict(config: Dict[str, Any]) -> RetryConfig:
     )
 
 
-def _sleep_with_jitter(base_delay: float, jitter: float) -> None:
-    if base_delay <= 0:
-        return
-    if jitter <= 0:
-        time.sleep(base_delay)
-        return
-    # jitter as a fraction of base_delay
-    delta = base_delay * jitter
-    time.sleep(max(0.0, base_delay + random.uniform(-delta, delta)))
-
-
 def post_json_with_retries(
     url: str,
     *,
@@ -99,41 +88,37 @@ def post_json_with_retries(
     retry: RetryConfig,
 ) -> requests.Response:
     """POST JSON with retry on network errors, 429 and 5xx."""
-    last_error: Optional[Exception] = None
+    from tenacity import RetryCallState
+    from luminary.infrastructure.retry import create_retry_decorator
 
-    for attempt in range(retry.max_attempts):
-        try:
-            logger.debug(f"HTTP POST {url} (attempt {attempt + 1}/{retry.max_attempts})")
-            resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
-            resp.raise_for_status()
-            return resp
-        except requests.exceptions.HTTPError as e:
-            status_code = e.response.status_code if e.response else None
-            last_error = e
+    def _retry_condition(exception: Exception) -> bool:
+        if isinstance(exception, requests.exceptions.RequestException):
+            if isinstance(exception, requests.exceptions.HTTPError):
+                return _should_retry_http_error(exception)
+            return True  # Retry network errors
+        return False
 
-            # Don't retry on auth errors
-            if status_code in (401, 403):
-                raise
+    def _before_sleep_log(retry_state: RetryCallState) -> None:
+        if retry_state.outcome is None:
+            return
+        exception = retry_state.outcome.exception()
+        if isinstance(exception, requests.exceptions.HTTPError):
+            status_code = exception.response.status_code if exception.response else None
+            logger.warning(f"HTTP error {status_code} on {url}: {exception}. Retrying...")
+        else:
+            logger.warning(f"HTTP network error on {url}: {exception}. Retrying...")
 
-            # Don't retry on most 4xx errors (except rate limit)
-            if status_code and 400 <= status_code < 500 and status_code != 429:
-                raise
+    def _make_request() -> requests.Response:
+        logger.debug(f"HTTP POST {url}")
+        resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        return resp
 
-            if attempt < retry.max_attempts - 1:
-                delay = retry.initial_delay * (retry.backoff_multiplier**attempt)
-                logger.warning(f"HTTP error {status_code} on {url}: {e}. Retrying in {delay}s...")
-                _sleep_with_jitter(delay, retry.jitter)
-                continue
-
-            raise
-        except requests.exceptions.RequestException as e:
-            last_error = e
-            if attempt < retry.max_attempts - 1:
-                delay = retry.initial_delay * (retry.backoff_multiplier**attempt)
-                logger.warning(f"HTTP network error on {url}: {e}. Retrying in {delay}s...")
-                _sleep_with_jitter(delay, retry.jitter)
-                continue
-            raise
-
-    raise RuntimeError(f"HTTP request failed: {last_error}") from last_error
+    try:
+        retry_decorator = create_retry_decorator(retry, _retry_condition, _before_sleep_log)
+        return retry_decorator(_make_request)()
+    except requests.exceptions.HTTPError:
+        raise
+    except Exception as e:
+        raise RuntimeError(f"HTTP request failed: {e}") from e
 

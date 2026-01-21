@@ -349,10 +349,11 @@ def mr(
         # Create GitLab client
         retry_config = config_manager.get_retry_config()
         try:
+            from luminary.infrastructure.http_client import retry_config_from_dict
+            retry_config_obj = retry_config_from_dict(retry_config)
             gitlab_client = GitLabClient(
                 gitlab_url=gitlab_url,
-                max_retries=retry_config.get("max_attempts", 3),
-                retry_delay=retry_config.get("initial_delay", 1.0),
+                retry_config=retry_config_obj,
             )
         except ValueError as e:
             _die(str(e), verbose=verbose_mode, exc=e)

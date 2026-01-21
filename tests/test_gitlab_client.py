@@ -97,7 +97,7 @@ class TestRetryLogic:
                     raise error
                 return "success"
             
-            with patch("luminary.infrastructure.gitlab.client.time.sleep"):
+            with patch("tenacity.nap.sleep"):  # Patch tenacity's sleep instead
                 result = client._retry_api_call(failing_func)
                 assert result == "success"
                 assert call_count["n"] == 3
@@ -120,7 +120,7 @@ class TestRetryLogic:
                     raise error
                 return "success"
             
-            with patch("luminary.infrastructure.gitlab.client.time.sleep"):
+            with patch("tenacity.nap.sleep"):  # Patch tenacity's sleep instead
                 result = client._retry_api_call(failing_func)
                 assert result == "success"
 
@@ -169,7 +169,7 @@ class TestRetryLogic:
                 error.response_code = 500
                 raise error
             
-            with patch("luminary.infrastructure.gitlab.client.time.sleep"):
+            with patch("tenacity.nap.sleep"):  # Patch tenacity's sleep instead
                 with pytest.raises(RuntimeError, match="GitLab API request failed after 2 attempts"):
                     client._retry_api_call(failing_func)
 
@@ -195,10 +195,78 @@ class TestRetryLogic:
             def mock_sleep(delay):
                 sleep_calls.append(delay)
             
-            with patch("luminary.infrastructure.gitlab.client.time.sleep", side_effect=mock_sleep):
+            with patch("tenacity.nap.sleep", side_effect=mock_sleep):  # Patch tenacity's sleep instead
                 client._retry_api_call(failing_func)
                 # First retry: 1.0 * 2^0 = 1.0, second retry: 1.0 * 2^1 = 2.0
-                assert sleep_calls == [1.0, 2.0]
+                # Note: with jitter default (0.1), delays will vary slightly, so we check they're approximately correct
+                assert len(sleep_calls) == 2
+                # Allow some variance due to jitter
+                assert 0.8 <= sleep_calls[0] <= 1.2
+                assert 1.6 <= sleep_calls[1] <= 2.4
+
+    def test_retry_with_jitter(self):
+        """Test that jitter adds randomness to retry delays"""
+        with patch("luminary.infrastructure.gitlab.client.gitlab.Gitlab") as mock_gitlab_class:
+            mock_gl = MagicMock()
+            mock_gitlab_class.return_value = mock_gl
+            
+            from luminary.infrastructure.http_client import RetryConfig
+            retry_config = RetryConfig(max_attempts=3, initial_delay=1.0, backoff_multiplier=2, jitter=0.2)
+            client = GitLabClient(private_token="test-token", retry_config=retry_config)
+            
+            call_count = {"n": 0}
+            sleep_calls = []
+            
+            def failing_func():
+                call_count["n"] += 1
+                if call_count["n"] < 3:
+                    error = GitlabError("Server error")
+                    error.response_code = 500
+                    raise error
+                return "success"
+            
+            def mock_sleep(delay):
+                sleep_calls.append(delay)
+            
+            with patch("tenacity.nap.sleep", side_effect=mock_sleep):
+                client._retry_api_call(failing_func)
+                assert len(sleep_calls) == 2
+                # With jitter=0.2, delays should vary by +/-20%
+                # First delay: 1.0 * 2^0 = 1.0 +/- 0.2
+                assert 0.8 <= sleep_calls[0] <= 1.2
+                # Second delay: 1.0 * 2^1 = 2.0 +/- 0.4
+                assert 1.6 <= sleep_calls[1] <= 2.4
+
+    def test_retry_with_custom_backoff_multiplier(self):
+        """Test that custom backoff_multiplier works correctly"""
+        with patch("luminary.infrastructure.gitlab.client.gitlab.Gitlab") as mock_gitlab_class:
+            mock_gl = MagicMock()
+            mock_gitlab_class.return_value = mock_gl
+            
+            from luminary.infrastructure.http_client import RetryConfig
+            retry_config = RetryConfig(max_attempts=3, initial_delay=1.0, backoff_multiplier=3, jitter=0)
+            client = GitLabClient(private_token="test-token", retry_config=retry_config)
+            
+            call_count = {"n": 0}
+            sleep_calls = []
+            
+            def failing_func():
+                call_count["n"] += 1
+                if call_count["n"] < 3:
+                    error = GitlabError("Server error")
+                    error.response_code = 500
+                    raise error
+                return "success"
+            
+            def mock_sleep(delay):
+                sleep_calls.append(delay)
+            
+            with patch("tenacity.nap.sleep", side_effect=mock_sleep):
+                client._retry_api_call(failing_func)
+                assert len(sleep_calls) == 2
+                # With backoff_multiplier=3: first delay = 1.0, second delay = 3.0
+                assert sleep_calls[0] == pytest.approx(1.0, rel=0.1)
+                assert sleep_calls[1] == pytest.approx(3.0, rel=0.1)
 
 
 class TestGetMergeRequest:

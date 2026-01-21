@@ -62,6 +62,7 @@ class ConfigManager:
             "max_attempts": 3,
             "backoff_multiplier": 2,
             "initial_delay": 1,
+            "jitter": 0.1,
         },
     }
 

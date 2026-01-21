@@ -6,13 +6,14 @@ import json
 import logging
 import os
 import re
-import time
 from typing import Dict, List, Optional, TYPE_CHECKING, Any
 
 import gitlab
 from gitlab.exceptions import GitlabError
 
 from luminary.domain.models.file_change import FileChange, Hunk
+from luminary.infrastructure.http_client import RetryConfig, retry_config_from_dict
+from luminary.infrastructure.retry import retry_gitlab_call
 
 if TYPE_CHECKING:
     from gitlab.v4.objects import ProjectMergeRequest
@@ -27,21 +28,37 @@ class GitLabClient:
         self,
         gitlab_url: Optional[str] = None,
         private_token: Optional[str] = None,
-        max_retries: int = 3,
-        retry_delay: float = 1.0,
+        retry_config: Optional[RetryConfig] = None,
+        # Legacy parameters for backward compatibility
+        max_retries: Optional[int] = None,
+        retry_delay: Optional[float] = None,
     ):
         """Initialize GitLab client
         
         Args:
             gitlab_url: GitLab instance URL (default: from GITLAB_URL env or gitlab.com)
             private_token: GitLab private token (default: from GITLAB_TOKEN env)
-            max_retries: Maximum retry attempts for API calls
-            retry_delay: Initial retry delay in seconds
+            retry_config: Retry configuration (takes precedence over max_retries/retry_delay)
+            max_retries: Maximum retry attempts for API calls (legacy, use retry_config)
+            retry_delay: Initial retry delay in seconds (legacy, use retry_config)
         """
         self.gitlab_url = gitlab_url or os.getenv("GITLAB_URL", "https://gitlab.com")
         self.private_token = private_token or os.getenv("GITLAB_TOKEN")
-        self.max_retries = max_retries
-        self.retry_delay = retry_delay
+
+        # Handle retry config - support both new and legacy parameters
+        if retry_config is not None:
+            self.retry_config = retry_config
+        elif max_retries is not None or retry_delay is not None:
+            # Legacy support: create RetryConfig from old parameters
+            config_dict = {}
+            if max_retries is not None:
+                config_dict["max_attempts"] = max_retries
+            if retry_delay is not None:
+                config_dict["initial_delay"] = retry_delay
+            self.retry_config = retry_config_from_dict(config_dict)
+        else:
+            # Default retry config
+            self.retry_config = RetryConfig()
 
         if not self.private_token:
             raise ValueError(
@@ -675,52 +692,11 @@ class GitLabClient:
         Raises:
             RuntimeError: If all retries failed
         """
-        for attempt in range(self.max_retries):
-            try:
-                return func(*args, **kwargs)
-            except GitlabError as e:
-                status_code = getattr(e, "response_code", None) if hasattr(e, "response_code") else None
-
-                # Don't retry on auth errors
-                if status_code in (401, 403):
-                    logger.error(f"GitLab API authentication error: {e}")
-                    raise RuntimeError(f"GitLab API authentication failed: {e}") from e
-
-                # Don't retry on client errors (except rate limits)
-                if status_code and 400 <= status_code < 500 and status_code != 429:
-                    if status_code == 404:
-                        logger.debug(f"GitLab API 404 (file not found): {e}")
-                    else:
-                        logger.error(f"GitLab API client error: {e}")
-                    raise RuntimeError(f"GitLab API client error: {e}") from e
-
-                # Retry on rate limits and server errors
-                if attempt < self.max_retries - 1:
-                    delay = self.retry_delay * (2 ** attempt)
-                    logger.warning(
-                        f"GitLab API error (attempt {attempt + 1}/{self.max_retries}): {e}. "
-                        f"Retrying in {delay}s..."
-                    )
-                    time.sleep(delay)
-                else:
-                    logger.error(f"GitLab API failed after {self.max_retries} attempts: {e}")
-                    raise RuntimeError(
-                        f"GitLab API request failed after {self.max_retries} attempts: {e}"
-                    ) from e
-
-            except Exception as e:
-                if attempt < self.max_retries - 1:
-                    delay = self.retry_delay * (2 ** attempt)
-                    logger.warning(
-                        f"GitLab API error (attempt {attempt + 1}/{self.max_retries}): {e}. "
-                        f"Retrying in {delay}s..."
-                    )
-                    time.sleep(delay)
-                else:
-                    logger.error(f"GitLab API error after {self.max_retries} attempts: {e}")
-                    raise RuntimeError(
-                        f"GitLab API error after {self.max_retries} attempts: {e}"
-                    ) from e
-
-        # This should never be reached, but just in case
-        raise RuntimeError("GitLab API request failed: unexpected error")
+        # Apply retry decorator to the function call
+        retry_decorator = retry_gitlab_call(self.retry_config)
+        
+        @retry_decorator
+        def _call_with_retry():
+            return func(*args, **kwargs)
+        
+        return _call_with_retry()
