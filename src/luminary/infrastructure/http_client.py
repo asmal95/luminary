@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 
 import requests
 
-from luminary.infrastructure.retry import call_with_retry, _should_retry_http_error
+from luminary.infrastructure.retry import _should_retry_http_error
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +88,14 @@ def post_json_with_retries(
     retry: RetryConfig,
 ) -> requests.Response:
     """POST JSON with retry on network errors, 429 and 5xx."""
-    from tenacity import RetryCallState
-    from luminary.infrastructure.retry import create_retry_decorator
+    from tenacity import (
+        retry as tenacity_retry,
+        retry_if_exception,
+        stop_after_attempt,
+        wait_exponential,
+        wait_random,
+        before_sleep_log,
+    )
 
     def _retry_condition(exception: Exception) -> bool:
         if isinstance(exception, requests.exceptions.RequestException):
@@ -98,25 +104,36 @@ def post_json_with_retries(
             return True  # Retry network errors
         return False
 
-    def _before_sleep_log(retry_state: RetryCallState) -> None:
-        if retry_state.outcome is None:
-            return
-        exception = retry_state.outcome.exception()
-        if isinstance(exception, requests.exceptions.HTTPError):
-            status_code = exception.response.status_code if exception.response else None
-            logger.warning(f"HTTP error {status_code} on {url}: {exception}. Retrying...")
-        else:
-            logger.warning(f"HTTP network error on {url}: {exception}. Retrying...")
-
     def _make_request() -> requests.Response:
         logger.debug(f"HTTP POST {url}")
         resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
         resp.raise_for_status()
         return resp
 
+    # Настройка wait с jitter
+    wait = wait_exponential(
+        multiplier=retry.initial_delay,
+        exp_base=retry.backoff_multiplier,
+        min=retry.initial_delay,
+        max=60.0,
+    )
+    if retry.jitter > 0:
+        jitter_amount = retry.initial_delay * retry.jitter
+        wait = wait + wait_random(-jitter_amount, jitter_amount)
+
+    # Прямое применение декоратора tenacity
+    @tenacity_retry(
+        stop=stop_after_attempt(retry.max_attempts),
+        wait=wait,
+        retry=retry_if_exception(_retry_condition),
+        reraise=True,
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+    )
+    def _request_with_retry():
+        return _make_request()
+
     try:
-        retry_decorator = create_retry_decorator(retry, _retry_condition, _before_sleep_log)
-        return retry_decorator(_make_request)()
+        return _request_with_retry()
     except requests.exceptions.HTTPError:
         raise
     except Exception as e:

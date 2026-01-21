@@ -13,7 +13,7 @@ from gitlab.exceptions import GitlabError
 
 from luminary.domain.models.file_change import FileChange, Hunk
 from luminary.infrastructure.http_client import RetryConfig, retry_config_from_dict
-from luminary.infrastructure.retry import retry_gitlab_call
+from luminary.infrastructure.retry import _should_retry_gitlab_error
 
 if TYPE_CHECKING:
     from gitlab.v4.objects import ProjectMergeRequest
@@ -692,11 +692,55 @@ class GitLabClient:
         Raises:
             RuntimeError: If all retries failed
         """
-        # Apply retry decorator to the function call
-        retry_decorator = retry_gitlab_call(self.retry_config)
-        
-        @retry_decorator
+        from tenacity import (
+            retry as tenacity_retry,
+            retry_if_exception,
+            stop_after_attempt,
+            wait_exponential,
+            wait_random,
+            before_sleep_log,
+        )
+
+        def _retry_condition(exception: Exception) -> bool:
+            if isinstance(exception, GitlabError):
+                return _should_retry_gitlab_error(exception)
+            return True  # Retry other exceptions
+
+        # Настройка wait с jitter
+        wait = wait_exponential(
+            multiplier=self.retry_config.initial_delay,
+            exp_base=self.retry_config.backoff_multiplier,
+            min=self.retry_config.initial_delay,
+            max=60.0,
+        )
+        if self.retry_config.jitter > 0:
+            jitter_amount = self.retry_config.initial_delay * self.retry_config.jitter
+            wait = wait + wait_random(-jitter_amount, jitter_amount)
+
+        @tenacity_retry(
+            stop=stop_after_attempt(self.retry_config.max_attempts),
+            wait=wait,
+            retry=retry_if_exception(_retry_condition),
+            reraise=True,
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+        )
         def _call_with_retry():
             return func(*args, **kwargs)
-        
-        return _call_with_retry()
+
+        # Вызываем функцию с retry и обрабатываем неретрайящиеся ошибки
+        try:
+            return _call_with_retry()
+        except GitlabError as e:
+            # Эти ошибки не ретраятся (логика в _retry_condition)
+            # Конвертируем в RuntimeError с понятными сообщениями
+            status_code = getattr(e, "response_code", None) if hasattr(e, "response_code") else None
+            if status_code in (401, 403):
+                logger.error(f"GitLab API authentication error: {e}")
+                raise RuntimeError(f"GitLab API authentication failed: {e}") from e
+            elif status_code and 400 <= status_code < 500 and status_code != 429:
+                logger.error(f"GitLab API client error ({status_code}): {e}")
+                raise RuntimeError(f"GitLab API client error: {e}") from e
+            else:
+                # Исчерпаны retry для 429/5xx
+                logger.error(f"GitLab API request failed after {self.retry_config.max_attempts} attempts: {e}")
+                raise RuntimeError(f"GitLab API request failed after {self.retry_config.max_attempts} attempts: {e}") from e

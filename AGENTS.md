@@ -299,9 +299,11 @@ The project includes `.gitlab-ci.yml` with three stages:
 - Comments from chunks are aggregated
 
 ### Retry Logic
-- Both LLM and GitLab API calls have retry with exponential backoff
-- Configurable via `retry` section in config
-- Default: 3 attempts, initial delay 1s, backoff multiplier 2
+- Unified retry logic using `tenacity` library for all API calls (LLM and GitLab)
+- Exponential backoff with configurable jitter
+- Configurable via `retry` section in config (max_attempts, initial_delay, backoff_multiplier, jitter)
+- Retry based on exception types (HTTPError, GitlabError, RequestException)
+- Default: 3 attempts, initial delay 1s, backoff multiplier 2, jitter 0.1
 
 ### Error Handling
 - Use `_die()` helper in CLI for user-friendly error messages
@@ -358,7 +360,7 @@ The project includes `.gitlab-ci.yml` with three stages:
 
 See `docs/ARCHITECTURE_SUMMARY.md` for detailed recommendations:
 
-1. **Retry logic duplication** - Consider using `tenacity` or `backoff` library
+1. ~~**Retry logic duplication**~~ ✅ **Resolved** - Unified using `tenacity` library
 2. **Configuration validation** - Consider using `pydantic` for schema validation
 3. **Prompt templating** - Consider migrating to Jinja2 for complex templates
 4. **Async support** - Consider migrating to `httpx` or `aiohttp` for async HTTP
