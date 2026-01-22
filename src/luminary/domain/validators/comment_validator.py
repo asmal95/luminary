@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from typing import List, Optional
+from typing import Optional
 
 from luminary.domain.models.comment import Comment
 from luminary.domain.models.file_change import FileChange
@@ -24,7 +24,7 @@ class ValidationResult:
         comment: Comment,
     ):
         """Initialize validation result
-        
+
         Args:
             valid: Whether comment is valid
             reason: Reason for validation decision
@@ -49,7 +49,7 @@ class CommentValidator:
         custom_prompt: Optional[str] = None,
     ):
         """Initialize comment validator
-        
+
         Args:
             llm_provider: LLM provider for validation
             threshold: Minimum score threshold (default: 0.7)
@@ -71,12 +71,12 @@ class CommentValidator:
         self, comment: Comment, file_change: FileChange, code_snippet: Optional[str] = None
     ) -> ValidationResult:
         """Validate a comment
-        
+
         Args:
             comment: Comment to validate
             file_change: File change context
             code_snippet: Relevant code snippet (optional)
-            
+
         Returns:
             ValidationResult with validation decision and scores
         """
@@ -89,7 +89,7 @@ class CommentValidator:
             # Get LLM response
             logger.debug(f"Validating comment for {file_change.path}:{comment.line_number}")
             response = self.llm_provider.generate(prompt)
-            
+
             # Log the raw response for debugging (truncated)
             logger.debug(f"Raw validation response (first 500 chars): {response[:500]}")
 
@@ -101,7 +101,7 @@ class CommentValidator:
                 "You are an expert code reviewer",
                 "Evaluate this code review comment",
             ]
-            
+
             # If response starts with prompt text, remove it
             for starter in prompt_starters:
                 if response.startswith(starter):
@@ -110,12 +110,12 @@ class CommentValidator:
                     if json_start > 50:  # JSON appears later in response (after prompt)
                         response = response[json_start:].strip()
                         break
-            
+
             # Also check if entire prompt is echoed back
             if response.startswith(prompt[:150]):  # Check first 150 chars
                 # Extract only the response part (after prompt)
-                response = response[len(prompt):].strip()
-            
+                response = response[len(prompt) :].strip()
+
             # If response still contains prompt text (multiline), try to extract JSON
             if any(starter in response for starter in prompt_starters):
                 # Find JSON boundaries - look for first { and last }
@@ -124,9 +124,11 @@ class CommentValidator:
                     json_end = response.rfind("}")
                     if json_end > json_start:
                         # Extract just the JSON part
-                        potential_json = response[json_start:json_end + 1]
+                        potential_json = response[json_start : json_end + 1]
                         # Quick validation: does it look like JSON?
-                        if potential_json.strip().startswith("{") and potential_json.strip().endswith("}"):
+                        if potential_json.strip().startswith(
+                            "{"
+                        ) and potential_json.strip().endswith("}"):
                             response = potential_json.strip()
 
             # Parse response
@@ -137,10 +139,7 @@ class CommentValidator:
                 self.stats["valid"] += 1
             else:
                 self.stats["invalid"] += 1
-                logger.info(
-                    f"Comment rejected: {result.reason} "
-                    f"(scores: {result.scores})"
-                )
+                logger.info(f"Comment rejected: {result.reason} " f"(scores: {result.scores})")
 
             # Update score aggregates when present
             try:
@@ -168,174 +167,154 @@ class CommentValidator:
 
     def _parse_validation_response(self, response: str, comment: Comment) -> ValidationResult:
         """Parse LLM validation response
-        
+
         Args:
             response: LLM response text
             comment: Comment being validated
-            
+
         Returns:
             ValidationResult
         """
         if not response or not response.strip():
             logger.warning("Empty validation response, assuming valid")
-            return ValidationResult(
-                valid=True,
-                reason="Empty validation response (using fallback)",
-                scores={"relevance": 0.7, "usefulness": 0.7, "non_redundancy": 0.7},
-                comment=comment,
-            )
-        
-        # Strategy 1: Try to extract JSON from markdown code blocks (```json or ```)
-        json_str = None
-        # Try ```json ... ``` first
-        code_block_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response, re.DOTALL)
-        if code_block_match:
-            json_str = code_block_match.group(1)
-        
-        # Strategy 2: Find the most complete JSON object in response
-        # Look for all { ... } pairs and pick the one that looks most like our JSON structure
-        if not json_str:
-            # Find all potential JSON objects
-            brace_start = -1
-            brace_depth = 0
-            best_json_start = -1
-            best_json_end = -1
-            
-            for i, char in enumerate(response):
-                if char == '{':
-                    if brace_depth == 0:
-                        brace_start = i
-                    brace_depth += 1
-                elif char == '}':
-                    brace_depth -= 1
-                    if brace_depth == 0 and brace_start >= 0:
-                        # Found a complete JSON object
-                        candidate = response[brace_start:i+1]
-                        # Check if it looks like our validation JSON (has "valid" and "scores")
-                        if '"valid"' in candidate and '"scores"' in candidate:
-                            best_json_start = brace_start
-                            best_json_end = i + 1
-                            break  # Take first complete match
-            
-            if best_json_start >= 0 and best_json_end > best_json_start:
-                json_str = response[best_json_start:best_json_end]
-        
-        # Strategy 3: Fallback - look for first { and last } in response
-        if not json_str:
-            start = response.find("{")
-            end = response.rfind("}") + 1
-            if start >= 0 and end > start:
-                json_str = response[start:end]
-        
-        # Strategy 4: Try entire response if it looks like JSON
-        if not json_str and response.strip().startswith("{") and response.strip().endswith("}"):
-            json_str = response.strip()
-        
-        # Try multiple parsing strategies
-        data = None
-        parsing_errors = []
-        
-        # Attempt 1: Direct parse
-        if json_str:
-            try:
-                data = json.loads(json_str)
-            except json.JSONDecodeError as e:
-                parsing_errors.append(f"Direct parse: {e}")
-                
-                # Attempt 2: Try to fix common JSON issues
-                try:
-                    # Remove trailing commas before closing braces/brackets
-                    fixed_json = re.sub(r',(\s*[}\]])', r'\1', json_str)
-                    # Fix single quotes to double quotes (basic)
-                    fixed_json = re.sub(r"'(\w+)':", r'"\1":', fixed_json)
-                    data = json.loads(fixed_json)
-                except (json.JSONDecodeError, ValueError) as e2:
-                    parsing_errors.append(f"Fixed parse: {e2}")
-                    
-                    # Attempt 3: Try to extract just the values we need
-                    try:
-                        # Use regex to extract key-value pairs
-                        valid_match = re.search(r'"valid"\s*:\s*(true|false)', json_str, re.IGNORECASE)
-                        reason_match = re.search(r'"reason"\s*:\s*"([^"]*)"', json_str)
-                        
-                        if valid_match or reason_match:
-                            valid = valid_match.group(1).lower() == "true" if valid_match else True
-                            reason = reason_match.group(1) if reason_match else "Partial parse"
-                            
-                            # Try to extract scores
-                            scores = {}
-                            for score_key in ["relevance", "usefulness", "non_redundancy"]:
-                                score_match = re.search(
-                                    rf'"{score_key}"\s*:\s*([0-9.]+)',
-                                    json_str,
-                                    re.IGNORECASE
-                                )
-                                if score_match:
-                                    try:
-                                        scores[score_key] = float(score_match.group(1))
-                                    except ValueError:
-                                        scores[score_key] = 0.7
-                            
-                            if not scores:
-                                scores = {"relevance": 0.7, "usefulness": 0.7, "non_redundancy": 0.7}
-                            
-                            return ValidationResult(
-                                valid=valid,
-                                reason=reason,
-                                scores=scores,
-                                comment=comment,
-                            )
-                    except Exception as e3:
-                        parsing_errors.append(f"Regex extract: {e3}")
-        
-        # If we successfully parsed JSON
-        if data:
-            valid = data.get("valid", False)
-            reason = data.get("reason", "No reason provided")
-            scores = data.get("scores", {})
-        else:
-            # Fallback: check if response contains "valid: true/false"
-            response_lower = response.strip().lower()
-            if "valid: true" in response_lower or '"valid": true' in response_lower or response_lower.startswith("true"):
-                valid = True
-                reason = "Fallback parse: found valid=true"
-            elif "valid: false" in response_lower or '"valid": false' in response_lower or response_lower.startswith("false"):
-                valid = False
-                reason = "Fallback parse: found valid=false"
-            else:
-                # Default to valid if can't parse (better to accept than reject on parsing errors)
-                logger.warning(
-                    f"Could not parse validation response after {len(parsing_errors)} attempts."
-                )
-                logger.warning(
-                    f"Response appears to be code/text instead of JSON. "
-                    f"Consider disabling validation with --no-validate or validator.enabled: false in config."
-                )
-                logger.debug(f"Parsing errors: {parsing_errors}")
-                logger.debug(f"Full unparseable response: {response}")
-                valid = True
-                reason = "Could not parse validation response (using fallback: assuming valid)"
-            
-            scores = {"relevance": 0.7, "usefulness": 0.7, "non_redundancy": 0.7}
-            
-            return ValidationResult(
-                valid=valid,
-                reason=reason,
-                scores=scores,
-                comment=comment,
-            )
+            return self._create_fallback_result(comment, "Empty response")
 
-        # Extract validation data
+        # Extract JSON from response
+        json_str = self._extract_json_from_response(response)
+        if not json_str:
+            return self._handle_unparseable_response(response, comment)
+
+        # Parse JSON with fixes
+        data = self._parse_json_with_fixes(json_str)
+        if not data:
+            return self._handle_unparseable_response(response, comment)
+
+        # Create validation result
+        return self._create_validation_result(data, comment)
+
+    def _extract_json_from_response(self, response: str) -> Optional[str]:
+        """Extract JSON string from response
+
+        Args:
+            response: LLM response text
+
+        Returns:
+            Extracted JSON string or None
+        """
+        # Strategy 1: Extract from markdown code blocks (```json or ```)
+        code_block_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", response, re.DOTALL)
+        if code_block_match:
+            return code_block_match.group(1)
+
+        # Strategy 2: Find complete JSON object with validation structure
+        brace_start = -1
+        brace_depth = 0
+
+        for i, char in enumerate(response):
+            if char == "{":
+                if brace_depth == 0:
+                    brace_start = i
+                brace_depth += 1
+            elif char == "}":
+                brace_depth -= 1
+                if brace_depth == 0 and brace_start >= 0:
+                    candidate = response[brace_start : i + 1]
+                    # Check if it has expected structure
+                    if '"valid"' in candidate and '"scores"' in candidate:
+                        return candidate
+
+        return None
+
+    def _parse_json_with_fixes(self, json_str: str) -> Optional[dict]:
+        """Parse JSON with common fixes
+
+        Args:
+            json_str: JSON string to parse
+
+        Returns:
+            Parsed dictionary or None
+        """
+        # Attempt 1: Direct parse
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            pass
+
+        # Attempt 2: Fix common issues
+        try:
+            # Remove trailing commas
+            fixed_json = re.sub(r",(\s*[}\]])", r"\1", json_str)
+            # Fix single quotes to double quotes
+            fixed_json = re.sub(r"'(\w+)':", r'"\1":', fixed_json)
+            return json.loads(fixed_json)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        return None
+
+    def _handle_unparseable_response(self, response: str, comment: Comment) -> ValidationResult:
+        """Handle unparseable response with fallback
+
+        Args:
+            response: Original response
+            comment: Comment being validated
+
+        Returns:
+            Fallback ValidationResult
+        """
+        response_lower = response.strip().lower()
+
+        # Simple text-based fallback
+        if any(x in response_lower for x in ["valid: true", '"valid": true', "^true"]):
+            return self._create_fallback_result(comment, "Text parse: valid=true", valid=True)
+        elif any(x in response_lower for x in ["valid: false", '"valid": false']):
+            return self._create_fallback_result(comment, "Text parse: valid=false", valid=False)
+
+        # Default to valid (better to accept than reject on parsing errors)
+        logger.warning("Could not parse validation response, assuming valid")
+        logger.debug(f"Unparseable response (first 200 chars): {response[:200]}")
+        return self._create_fallback_result(comment, "Parse failed, assuming valid")
+
+    def _create_fallback_result(
+        self, comment: Comment, reason: str, valid: bool = True
+    ) -> ValidationResult:
+        """Create fallback validation result
+
+        Args:
+            comment: Comment being validated
+            reason: Fallback reason
+            valid: Whether to consider valid (default: True)
+
+        Returns:
+            ValidationResult with default scores
+        """
+        return ValidationResult(
+            valid=valid,
+            reason=reason,
+            scores={"relevance": 0.7, "usefulness": 0.7, "non_redundancy": 0.7},
+            comment=comment,
+        )
+
+    def _create_validation_result(self, data: dict, comment: Comment) -> ValidationResult:
+        """Create validation result from parsed data
+
+        Args:
+            data: Parsed JSON data
+            comment: Comment being validated
+
+        Returns:
+            ValidationResult with threshold check
+        """
         valid = data.get("valid", False)
         reason = data.get("reason", "No reason provided")
         scores = data.get("scores", {})
 
-        # Check threshold
+        # Extract scores
         relevance = scores.get("relevance", 0.0)
         usefulness = scores.get("usefulness", 0.0)
         non_redundancy = scores.get("non_redundancy", 0.0)
 
-        # Comment is valid if all scores meet threshold
+        # Check threshold
         is_valid = (
             valid
             and relevance >= self.threshold
@@ -352,7 +331,7 @@ class CommentValidator:
 
     def get_stats(self) -> dict:
         """Get validation statistics
-        
+
         Returns:
             Dictionary with validation statistics
         """

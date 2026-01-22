@@ -10,8 +10,8 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from luminary.infrastructure.llm.base import LLMProvider
 from luminary.infrastructure.http_client import post_json_with_retries, retry_config_from_dict
+from luminary.infrastructure.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,9 @@ class OpenAICompatibleChatProvider(LLMProvider):
         self.retry = retry_config_from_dict(config)
 
     def _validate_config(self, config: Dict[str, Any]) -> None:
-        api_key = config.get("api_key") or (os.getenv(self._api_key_env) if self._api_key_env else None)
+        api_key = config.get("api_key") or (
+            os.getenv(self._api_key_env) if self._api_key_env else None
+        )
         if self._require_api_key and not api_key:
             env_name = self._api_key_env or "<unset>"
             raise ValueError(
@@ -93,7 +95,11 @@ class OpenAICompatibleChatProvider(LLMProvider):
 
         try:
             response = post_json_with_retries(
-                self._api_url, payload=payload, headers=headers, timeout=self.timeout, retry=self.retry
+                self._api_url,
+                payload=payload,
+                headers=headers,
+                timeout=self.timeout,
+                retry=self.retry,
             )
         except Exception as e:
             raise RuntimeError(f"LLM API request failed: {e}") from e
@@ -103,4 +109,3 @@ class OpenAICompatibleChatProvider(LLMProvider):
             return data["choices"][0]["message"]["content"]
         except Exception as e:
             raise RuntimeError(f"Failed to parse LLM response JSON: {e}") from e
-

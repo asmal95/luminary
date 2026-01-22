@@ -40,8 +40,6 @@ limits:
 # Comment settings
 comments:
   mode: both  # inline, summary, both
-  severity_levels: true
-  markdown: true
 
 # Retry configuration
 retry:

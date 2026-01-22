@@ -14,10 +14,10 @@ from luminary.domain.config.validator import ValidatorConfig
 
 class AppConfig(BaseModel):
     """Main application configuration.
-    
+
     This is the root configuration model that aggregates all configuration sections.
     Validation is performed at load time to fail fast on configuration errors.
-    
+
     Attributes:
         llm: LLM provider configuration
         validator: Comment validation configuration
@@ -73,8 +73,6 @@ class AppConfig(BaseModel):
                 },
                 "comments": {
                     "mode": "both",
-                    "severity_levels": True,
-                    "markdown": True,
                 },
                 "prompts": {
                     "review": None,

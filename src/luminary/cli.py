@@ -45,10 +45,10 @@ def _die(message: str, verbose: bool = False, exc: Optional[Exception] = None) -
 
 def parse_file_or_diff(file_path: Path) -> FileChange:
     """Parse a file or diff into FileChange object
-    
+
     Args:
         file_path: Path to file or diff
-        
+
     Returns:
         FileChange object
     """
@@ -64,25 +64,16 @@ def parse_file_or_diff(file_path: Path) -> FileChange:
     return parse_file_content(file_path)
 
 
-def _create_llm_provider(
-    config_manager: ConfigManager,
-    provider_override: Optional[str],
-    verbose: bool,
-) -> any:
-    """Create LLM provider from config
-    
+def _create_provider_config(config_manager: ConfigManager) -> dict:
+    """Create provider configuration dictionary
+
     Args:
         config_manager: Configuration manager
-        provider_override: Optional provider override from CLI
-        verbose: Verbose mode for error reporting
-        
+
     Returns:
-        LLM provider instance
+        Provider configuration dictionary
     """
     llm_config = config_manager.get_llm_config()
-    provider_type = provider_override or llm_config.get("provider", "mock")
-    logger.info(f"Using LLM provider: {provider_type}")
-
     provider_config = {
         "model": llm_config.get("model"),
         "temperature": llm_config.get("temperature"),
@@ -90,6 +81,29 @@ def _create_llm_provider(
         "top_p": llm_config.get("top_p"),
     }
     provider_config.update(config_manager.get_retry_config())
+    return provider_config
+
+
+def _create_llm_provider(
+    config_manager: ConfigManager,
+    provider_override: Optional[str],
+    verbose: bool,
+) -> any:
+    """Create LLM provider from config
+
+    Args:
+        config_manager: Configuration manager
+        provider_override: Optional provider override from CLI
+        verbose: Verbose mode for error reporting
+
+    Returns:
+        LLM provider instance
+    """
+    llm_config = config_manager.get_llm_config()
+    provider_type = provider_override or llm_config.get("provider", "mock")
+    logger.info(f"Using LLM provider: {provider_type}")
+
+    provider_config = _create_provider_config(config_manager)
 
     try:
         return LLMProviderFactory.create(provider_type, provider_config)
@@ -105,14 +119,14 @@ def _create_validator(
     verbose: bool,
 ) -> Optional[CommentValidator]:
     """Create comment validator if enabled
-    
+
     Args:
         config_manager: Configuration manager
         llm_provider: Main LLM provider (used as fallback)
         provider_config: Provider configuration
         no_validate: Whether validation is disabled
         verbose: Verbose mode for error reporting
-        
+
     Returns:
         CommentValidator instance or None
     """
@@ -156,13 +170,13 @@ def _create_review_service(
     comments_mode_override: Optional[str],
 ) -> ReviewService:
     """Create review service
-    
+
     Args:
         config_manager: Configuration manager
         llm_provider: LLM provider
         validator: Optional comment validator
         comments_mode_override: Optional comments mode override
-        
+
     Returns:
         ReviewService instance
     """
@@ -183,7 +197,7 @@ def _create_review_service(
 
 def _output_file_review_results(result: any, validator: Optional[CommentValidator]) -> None:
     """Output file review results to console
-    
+
     Args:
         result: Review result
         validator: Optional validator for stats
@@ -244,7 +258,7 @@ def cli(ctx, verbose: bool, config: Path):
 @click.pass_context
 def file(ctx, file_path: Path, provider: str, comments_mode: str, no_validate: bool):
     """Review a single file using AI.
-    
+
     FILE_PATH: Path to the file or diff to review
     """
     logger.info(f"Starting review for: {file_path}")
@@ -253,16 +267,7 @@ def file(ctx, file_path: Path, provider: str, comments_mode: str, no_validate: b
     try:
         config_manager = ConfigManager(config_path=ctx.obj.get("config_path"))
         llm_provider = _create_llm_provider(config_manager, provider, verbose)
-
-        # Get provider config for validator
-        llm_config = config_manager.get_llm_config()
-        provider_config = {
-            "model": llm_config.get("model"),
-            "temperature": llm_config.get("temperature"),
-            "max_tokens": llm_config.get("max_tokens"),
-            "top_p": llm_config.get("top_p"),
-        }
-        provider_config.update(config_manager.get_retry_config())
+        provider_config = _create_provider_config(config_manager)
 
         validator = _create_validator(
             config_manager, llm_provider, provider_config, no_validate, verbose
@@ -315,7 +320,7 @@ def mr(
     verbose: bool,
 ):
     """Review a GitLab merge request.
-    
+
     PROJECT_ID: GitLab project ID or path (e.g., 'group/project')
     MERGE_REQUEST_IID: Merge request IID (internal ID, shown as !123)
     """
@@ -328,16 +333,7 @@ def mr(
     try:
         config_manager = ConfigManager(config_path=ctx.obj.get("config_path"))
         llm_provider = _create_llm_provider(config_manager, provider, verbose_mode)
-
-        # Get provider config for validator
-        llm_config = config_manager.get_llm_config()
-        provider_config = {
-            "model": llm_config.get("model"),
-            "temperature": llm_config.get("temperature"),
-            "max_tokens": llm_config.get("max_tokens"),
-            "top_p": llm_config.get("top_p"),
-        }
-        provider_config.update(config_manager.get_retry_config())
+        provider_config = _create_provider_config(config_manager)
 
         validator = _create_validator(
             config_manager, llm_provider, provider_config, no_validate, verbose_mode
@@ -350,6 +346,7 @@ def mr(
         retry_config = config_manager.get_retry_config()
         try:
             from luminary.infrastructure.http_client import retry_config_from_dict
+
             retry_config_obj = retry_config_from_dict(retry_config)
             gitlab_client = GitLabClient(
                 gitlab_url=gitlab_url,
@@ -397,7 +394,7 @@ def mr(
         click.echo(f"Total comments generated: {stats['total_comments']}")
         if not no_post:
             click.echo(f"Comments posted to GitLab: {stats['comments_posted']}")
-            if stats['comments_failed'] > 0:
+            if stats["comments_failed"] > 0:
                 click.echo(f"Failed to post: {stats['comments_failed']}", err=True)
         else:
             click.echo("(Dry run - comments not posted)")

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 class LimitsConfig(BaseModel):
     """Configuration for processing limits.
-    
+
     Attributes:
         max_files: Maximum number of files to process (None = unlimited)
         max_lines: Maximum lines of changes (None = unlimited)

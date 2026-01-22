@@ -27,14 +27,14 @@ class LLMProviderFactory:
     @classmethod
     def create(cls, provider_type: str, config: Dict[str, Any] = None) -> LLMProvider:
         """Create LLM provider instance
-        
+
         Args:
             provider_type: Type of provider (mock, openrouter, etc.)
             config: Provider configuration
-            
+
         Returns:
             LLMProvider instance
-            
+
         Raises:
             ValueError: If provider type is not supported
         """
@@ -46,8 +46,7 @@ class LLMProviderFactory:
         if provider_type_lower not in cls.PROVIDERS:
             available = ", ".join(cls.PROVIDERS.keys())
             raise ValueError(
-                f"Unknown LLM provider: {provider_type}. "
-                f"Available providers: {available}"
+                f"Unknown LLM provider: {provider_type}. " f"Available providers: {available}"
             )
 
         provider_class = cls.PROVIDERS[provider_type_lower]

@@ -24,7 +24,9 @@ def _should_retry_http_error(exception: requests.exceptions.HTTPError) -> bool:
 
 def _should_retry_gitlab_error(exception: GitlabError) -> bool:
     """Check if GitlabError should be retried."""
-    status_code = getattr(exception, "response_code", None) if hasattr(exception, "response_code") else None
+    status_code = (
+        getattr(exception, "response_code", None) if hasattr(exception, "response_code") else None
+    )
     # Don't retry on auth errors or most 4xx (except 429)
     if status_code in (401, 403):
         return False
@@ -32,5 +34,3 @@ def _should_retry_gitlab_error(exception: GitlabError) -> bool:
         return False
     # Retry on 429 and 5xx
     return True
-
-

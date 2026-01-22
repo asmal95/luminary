@@ -29,4 +29,3 @@ class VLLMProvider(OpenAICompatibleChatProvider):
             default_model="local-model",
             require_api_key=False,
         )
-

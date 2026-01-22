@@ -40,7 +40,9 @@ class Comment:
 
     def to_markdown(self) -> str:
         """Format comment as markdown"""
-        severity_prefix = f"**[{self.severity.value.upper()}]** " if self.severity != Severity.INFO else ""
+        severity_prefix = (
+            f"**[{self.severity.value.upper()}]** " if self.severity != Severity.INFO else ""
+        )
         location = ""
         if self.line_number:
             location = f"\n\n**Location:** Line {self.line_number}"

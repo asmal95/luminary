@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 class ValidatorConfig(BaseModel):
     """Configuration for comment validation.
-    
+
     Attributes:
         enabled: Whether validation is enabled
         provider: LLM provider (None = use same as main LLM)

@@ -69,7 +69,7 @@ Return ONLY JSON. Nothing else."""
 
     def __init__(self, custom_prompt: Optional[str] = None):
         """Initialize prompt builder
-        
+
         Args:
             custom_prompt: Custom prompt template (uses default if None)
         """
@@ -77,10 +77,10 @@ Return ONLY JSON. Nothing else."""
 
     def build(self, file_change: FileChange, options: Optional[ReviewPromptOptions] = None) -> str:
         """Build review prompt for file change
-        
+
         Args:
             file_change: File change to review
-            
+
         Returns:
             Formatted prompt string
         """
@@ -99,11 +99,17 @@ Return ONLY JSON. Nothing else."""
 
         # Comment mode
         if options.comment_mode == "inline":
-            context_parts.append("Requested output: inline comments only (JSON array, no summary field).")
+            context_parts.append(
+                "Requested output: inline comments only (JSON array, no summary field)."
+            )
         elif options.comment_mode == "summary":
-            context_parts.append("Requested output: summary only (return empty comments array [] and include summary field).")
+            context_parts.append(
+                "Requested output: summary only (return empty comments array [] and include summary field)."
+            )
         else:
-            context_parts.append("Requested output: inline comments (JSON array) and a summary (optional summary field in JSON).")
+            context_parts.append(
+                "Requested output: inline comments (JSON array) and a summary (optional summary field in JSON)."
+            )
 
         # File content (if available)
         if file_change.new_content:
@@ -122,8 +128,7 @@ Return ONLY JSON. Nothing else."""
                 context_parts.append(f"\n... (truncated, showing first {max_lines} lines) ...")
             else:
                 numbered = [
-                    f"{options.line_number_offset + i + 1}: {line}"
-                    for i, line in enumerate(lines)
+                    f"{options.line_number_offset + i + 1}: {line}" for i, line in enumerate(lines)
                 ]
                 context_parts.append("\n".join(numbered))
             context_parts.append("```")

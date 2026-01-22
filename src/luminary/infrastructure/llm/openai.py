@@ -20,4 +20,3 @@ class OpenAIProvider(OpenAICompatibleChatProvider):
             default_model="gpt-4o-mini",
             require_api_key=True,
         )
-

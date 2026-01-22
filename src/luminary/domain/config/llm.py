@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 class LLMConfig(BaseModel):
     """Configuration for LLM provider.
-    
+
     Attributes:
         provider: LLM provider name
         model: Model identifier

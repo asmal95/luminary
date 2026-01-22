@@ -11,7 +11,7 @@ class MockLLMProvider(LLMProvider):
 
     def __init__(self, config: Dict[str, Any] = None):
         """Initialize mock provider
-        
+
         Args:
             config: Optional configuration with:
                 - delay: Simulated API delay in seconds (default: 0.1)
@@ -32,11 +32,11 @@ class MockLLMProvider(LLMProvider):
 
     def generate(self, prompt: str, **kwargs) -> str:
         """Generate mock response
-        
+
         Args:
             prompt: Input prompt (used to lookup predefined response)
             **kwargs: Ignored for mock provider
-            
+
         Returns:
             Mock response text
         """

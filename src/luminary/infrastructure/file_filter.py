@@ -19,7 +19,7 @@ class FileFilter:
         ignore_binary: bool = True,
     ):
         """Initialize file filter
-        
+
         Args:
             ignore_patterns: List of glob patterns to ignore
             ignore_binary: Whether to ignore binary files
@@ -29,10 +29,10 @@ class FileFilter:
 
     def should_ignore(self, file_change: FileChange) -> tuple[bool, str]:
         """Check if file should be ignored
-        
+
         Args:
             file_change: File change to check
-            
+
         Returns:
             Tuple of (should_ignore, reason)
         """
@@ -51,11 +51,11 @@ class FileFilter:
 
     def _match_pattern(self, file_path: str, pattern: str) -> bool:
         """Check if file path matches pattern
-        
+
         Args:
             file_path: File path to check
             pattern: Glob pattern
-            
+
         Returns:
             True if matches
         """
@@ -68,12 +68,14 @@ class FileFilter:
             Path(file_path_normalized).name, pattern
         )
 
-    def filter_files(self, file_changes: List[FileChange]) -> tuple[List[FileChange], List[tuple[FileChange, str]]]:
+    def filter_files(
+        self, file_changes: List[FileChange]
+    ) -> tuple[List[FileChange], List[tuple[FileChange, str]]]:
         """Filter list of file changes
-        
+
         Args:
             file_changes: List of file changes to filter
-            
+
         Returns:
             Tuple of (filtered_files, ignored_files_with_reasons)
         """

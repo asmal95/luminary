@@ -30,7 +30,7 @@ DO NOT write any code, explanations, or text. ONLY return the JSON object above 
 
     def __init__(self, custom_prompt: Optional[str] = None):
         """Initialize validation prompt builder
-        
+
         Args:
             custom_prompt: Custom prompt template (uses default if None)
         """
@@ -40,12 +40,12 @@ DO NOT write any code, explanations, or text. ONLY return the JSON object above 
         self, comment: Comment, file_change: FileChange, code_snippet: Optional[str] = None
     ) -> str:
         """Build validation prompt for comment
-        
+
         Args:
             comment: Comment to validate
             file_change: File change context
             code_snippet: Relevant code snippet (if available)
-            
+
         Returns:
             Formatted prompt string
         """

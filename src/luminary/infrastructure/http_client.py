@@ -84,26 +84,28 @@ def post_json_with_retries(
     retry: RetryConfig,
 ) -> requests.Response:
     """POST JSON with retry on network errors, 429 and 5xx.
-    
+
     Args:
         url: URL to POST to
         payload: JSON payload
         headers: HTTP headers
         timeout: Request timeout in seconds
         retry: Retry configuration (Pydantic model)
-        
+
     Returns:
         Response object
     """
     retry_config = retry
-    
+
     from tenacity import (
-        retry as tenacity_retry,
+        before_sleep_log,
         retry_if_exception,
         stop_after_attempt,
         wait_exponential,
         wait_random,
-        before_sleep_log,
+    )
+    from tenacity import (
+        retry as tenacity_retry,
     )
 
     def _retry_condition(exception: Exception) -> bool:
@@ -147,4 +149,3 @@ def post_json_with_retries(
         raise
     except Exception as e:
         raise RuntimeError(f"HTTP request failed: {e}") from e
-

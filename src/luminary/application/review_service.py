@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Iterable, List, Optional, Tuple, Dict, Any
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from luminary.domain.models.comment import Comment, Severity
 from luminary.domain.models.file_change import FileChange
@@ -32,7 +32,7 @@ class ReviewService:
         framework: Optional[str] = None,
     ):
         """Initialize review service
-        
+
         Args:
             llm_provider: LLM provider instance
             validator: Optional comment validator (if None, comments are not validated)
@@ -54,10 +54,10 @@ class ReviewService:
 
     def review_file(self, file_change: FileChange) -> ReviewResult:
         """Review a single file change
-        
+
         Args:
             file_change: File change to review
-            
+
         Returns:
             Review result with comments
         """
@@ -93,8 +93,7 @@ class ReviewService:
             )
 
             logger.info(
-                f"Review completed for {file_change.path}: "
-                f"{len(comments)} comments generated"
+                f"Review completed for {file_change.path}: " f"{len(comments)} comments generated"
             )
             return result
 
@@ -102,15 +101,13 @@ class ReviewService:
             logger.error(f"Error reviewing file {file_change.path}: {e}", exc_info=True)
             return ReviewResult(file_change=file_change, error=str(e))
 
-    def _get_llm_responses(
-        self, file_change: FileChange, language: Optional[str]
-    ) -> List[str]:
+    def _get_llm_responses(self, file_change: FileChange, language: Optional[str]) -> List[str]:
         """Get LLM responses (with chunking if needed)
-        
+
         Args:
             file_change: File change to review
             language: Detected language
-            
+
         Returns:
             List of LLM response strings
         """
@@ -147,11 +144,11 @@ class ReviewService:
         self, comments: List[Comment], summary: Optional[str]
     ) -> Tuple[List[Comment], Optional[str]]:
         """Apply comment mode filtering
-        
+
         Args:
             comments: List of comments
             summary: Summary text
-            
+
         Returns:
             Tuple of (filtered comments, filtered summary)
         """
@@ -162,15 +159,13 @@ class ReviewService:
         else:  # both
             return comments, summary
 
-    def _validate_comments(
-        self, comments: List[Comment], file_change: FileChange
-    ) -> List[Comment]:
+    def _validate_comments(self, comments: List[Comment], file_change: FileChange) -> List[Comment]:
         """Validate comments using validator
-        
+
         Args:
             comments: List of comments to validate
             file_change: File change for context
-            
+
         Returns:
             List of validated comments
         """
@@ -199,62 +194,60 @@ class ReviewService:
 
     def _extract_json_from_response(self, response: str) -> Optional[str]:
         """Extract JSON string from response (handles markdown code blocks)
-        
+
         Args:
             response: LLM response text
-            
+
         Returns:
             JSON string or None if not found
         """
         json_str = response.strip()
-        
+
         # Try to extract JSON from markdown code blocks
-        json_match = re.search(
-            r'```(?:json)?\s*(\[.*?\]|{.*?"comments".*?})', response, re.DOTALL
-        )
+        json_match = re.search(r'```(?:json)?\s*(\[.*?\]|{.*?"comments".*?})', response, re.DOTALL)
         if json_match:
             json_str = json_match.group(1)
-        
+
         return json_str
 
     def _fix_common_json_errors(self, json_str: str) -> str:
         """Fix common JSON errors before parsing
-        
+
         Args:
             json_str: JSON string with potential errors
-            
+
         Returns:
             Fixed JSON string
         """
         # Fix empty line fields: "line": , -> "line": null
         json_str = re.sub(r'"line"\s*:\s*,', '"line": null,', json_str)
-        
+
         # Fix empty suggestion fields
         json_str = re.sub(r'"suggestion"\s*:\s*,', '"suggestion": null,', json_str)
         json_str = re.sub(r'"suggestion"\s*:\s*}', '"suggestion": null}', json_str)
         json_str = re.sub(
             r'"suggestion"\s*:\s*$', '"suggestion": null', json_str, flags=re.MULTILINE
         )
-        
+
         # Remove trailing commas before closing brackets/braces
-        json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
-        
+        json_str = re.sub(r",(\s*[}\]])", r"\1", json_str)
+
         # Fix unquoted null values
-        json_str = re.sub(r':\s*null\b', ': null', json_str)
-        
+        json_str = re.sub(r":\s*null\b", ": null", json_str)
+
         # Fix missing quotes around string values (conservative heuristic)
         json_str = re.sub(
             r'"message"\s*:\s*([^",\[\]{}()\n]+)(?=\s*[,}])', r'"message": "\1"', json_str
         )
-        
+
         return json_str
 
     def _parse_json_response(self, json_str: str) -> Optional[Dict[str, Any]]:
         """Parse JSON string with error handling
-        
+
         Args:
             json_str: JSON string to parse
-            
+
         Returns:
             Parsed JSON data or None if parsing fails
         """
@@ -273,11 +266,11 @@ class ReviewService:
 
     def _parse_comment_item(self, item: Dict[str, Any], file_path: str) -> Optional[Comment]:
         """Parse a single comment item from JSON
-        
+
         Args:
             item: Comment item dictionary
             file_path: Expected file path
-            
+
         Returns:
             Comment object or None if invalid
         """
@@ -308,7 +301,7 @@ class ReviewService:
         # Extract fields
         comment_message = item.get("message", "")
         comment_suggestion = item.get("suggestion")
-        
+
         # Determine severity from message keywords
         severity = self._infer_severity(comment_message)
 
@@ -322,10 +315,10 @@ class ReviewService:
 
     def _infer_severity(self, message: str) -> Severity:
         """Infer severity from message content
-        
+
         Args:
             message: Comment message
-            
+
         Returns:
             Inferred severity level
         """
@@ -338,18 +331,15 @@ class ReviewService:
 
     def _parse_llm_response(self, response: str, file_path: str) -> List[Comment]:
         """Parse LLM response into Comment objects
-        
+
         Args:
             response: LLM response text (should be JSON)
             file_path: Path to the file being reviewed
-            
+
         Returns:
             List of Comment objects
         """
-        logger.debug(
-            f"Parsing LLM response for {file_path} "
-            f"(length: {len(response)} chars)"
-        )
+        logger.debug(f"Parsing LLM response for {file_path} " f"(length: {len(response)} chars)")
 
         try:
             # Extract and fix JSON
@@ -386,7 +376,9 @@ class ReviewService:
                 f"Failed to parse JSON response for {file_path}: {e}. "
                 f"Response preview: {response[:200]}..."
             )
-            return self._create_fallback_comment(response, file_path, "Parsing error: expected JSON format")
+            return self._create_fallback_comment(
+                response, file_path, "Parsing error: expected JSON format"
+            )
 
         except Exception as e:
             logger.error(f"Error parsing LLM response for {file_path}: {e}", exc_info=True)
@@ -396,12 +388,12 @@ class ReviewService:
         self, response: str, file_path: str, error_prefix: str
     ) -> List[Comment]:
         """Create fallback comment when parsing fails
-        
+
         Args:
             response: Original response text
             file_path: File path
             error_prefix: Error message prefix
-            
+
         Returns:
             List with single fallback comment
         """
@@ -417,10 +409,10 @@ class ReviewService:
 
     def _extract_summary(self, response: str) -> Optional[str]:
         """Extract summary section from LLM response
-        
+
         Args:
             response: LLM response text (JSON or text)
-            
+
         Returns:
             Summary text or None
         """
@@ -430,7 +422,7 @@ class ReviewService:
             if json_str:
                 fixed_json = self._fix_common_json_errors(json_str)
                 data = self._parse_json_response(fixed_json)
-                
+
                 if data and isinstance(data, dict) and "summary" in data:
                     summary = data.get("summary")
                     if summary:
@@ -443,10 +435,10 @@ class ReviewService:
 
     def _extract_summary_from_text(self, response: str) -> Optional[str]:
         """Extract summary from legacy text format
-        
+
         Args:
             response: Response text
-            
+
         Returns:
             Summary text or None
         """
@@ -473,10 +465,10 @@ class ReviewService:
 
     def _detect_language_from_path(self, path: str) -> Optional[str]:
         """Detect programming language from file path
-        
+
         Args:
             path: File path
-            
+
         Returns:
             Language name or None
         """
@@ -510,10 +502,10 @@ class ReviewService:
 
     def _estimate_tokens(self, text: str) -> int:
         """Estimate token count (rough heuristic: ~4 chars per token)
-        
+
         Args:
             text: Text to estimate
-            
+
         Returns:
             Estimated token count
         """
@@ -521,10 +513,10 @@ class ReviewService:
 
     def _should_chunk(self, file_change: FileChange) -> bool:
         """Check if file should be chunked
-        
+
         Args:
             file_change: File change to check
-            
+
         Returns:
             True if chunking is needed
         """
@@ -536,12 +528,12 @@ class ReviewService:
         self, file_change: FileChange
     ) -> Iterable[Tuple[FileChange, Tuple[int, int]]]:
         """Yield FileChange objects for chunks of file
-        
+
         Chunking is line-based with overlap; hunks are filtered to those intersecting the chunk.
-        
+
         Args:
             file_change: File change to chunk
-            
+
         Yields:
             Tuple of (chunk FileChange, (start_line, end_line))
         """
@@ -558,7 +550,7 @@ class ReviewService:
         while start_idx < len(lines):
             used = 0
             end_idx = start_idx
-            
+
             while end_idx < len(lines) and used + line_tokens[end_idx] <= token_budget:
                 used += line_tokens[end_idx]
                 end_idx += 1
@@ -597,12 +589,12 @@ class ReviewService:
         self, file_change: FileChange, start_line: int, end_line: int
     ) -> List:
         """Filter hunks to those intersecting the given line range
-        
+
         Args:
             file_change: File change with hunks
             start_line: Start line number (1-based)
             end_line: End line number (1-based)
-            
+
         Returns:
             List of hunks intersecting the range
         """
@@ -620,10 +612,10 @@ class ReviewService:
 
     def _dedupe_comments(self, comments: List[Comment]) -> List[Comment]:
         """Remove duplicate comments
-        
+
         Args:
             comments: List of comments
-            
+
         Returns:
             Deduplicated list of comments
         """
@@ -644,10 +636,10 @@ class ReviewService:
 
     def _aggregate_summaries(self, summaries: List[str]) -> Optional[str]:
         """Aggregate multiple summaries into one
-        
+
         Args:
             summaries: List of summary strings
-            
+
         Returns:
             Aggregated summary or None
         """
@@ -664,15 +656,13 @@ class ReviewService:
             lines.append("")
         return "\n".join(lines).strip()
 
-    def _extract_code_snippet(
-        self, file_change: FileChange, comment: Comment
-    ) -> Optional[str]:
+    def _extract_code_snippet(self, file_change: FileChange, comment: Comment) -> Optional[str]:
         """Extract relevant code snippet for comment validation
-        
+
         Args:
             file_change: File change
             comment: Comment to extract snippet for
-            
+
         Returns:
             Code snippet or None
         """

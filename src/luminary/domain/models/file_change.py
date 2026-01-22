@@ -48,6 +48,4 @@ class FileChange:
     @property
     def total_lines_changed(self) -> int:
         """Calculate total number of lines changed"""
-        return sum(
-            hunk.old_count + hunk.new_count for hunk in self.hunks if self.hunks
-        )
+        return sum(hunk.old_count + hunk.new_count for hunk in self.hunks if self.hunks)

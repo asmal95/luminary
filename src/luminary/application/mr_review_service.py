@@ -4,7 +4,6 @@ import logging
 from typing import List, Optional
 
 from luminary.application.review_service import ReviewService
-from luminary.domain.models.comment import Comment
 from luminary.domain.models.file_change import FileChange
 from luminary.domain.models.review_result import ReviewResult
 from luminary.infrastructure.file_filter import FileFilter
@@ -28,7 +27,7 @@ class MRReviewService:
         comment_mode: str = "both",
     ):
         """Initialize MR review service
-        
+
         Args:
             llm_provider: LLM provider for code review
             gitlab_client: GitLab API client
@@ -49,21 +48,19 @@ class MRReviewService:
         self, project_id: str, merge_request_iid: int, post_comments: bool = True
     ) -> dict:
         """Review entire merge request
-        
+
         Args:
             project_id: GitLab project ID or path
             merge_request_iid: Merge request IID
             post_comments: Whether to post comments to GitLab
-            
+
         Returns:
             Dictionary with review statistics
         """
         logger.info(f"Starting review of MR !{merge_request_iid} in {project_id}")
 
         # Get file changes from GitLab
-        file_changes = self.gitlab_client.get_merge_request_changes(
-            project_id, merge_request_iid
-        )
+        file_changes = self.gitlab_client.get_merge_request_changes(project_id, merge_request_iid)
 
         # Filter files
         filtered_files, ignored_files = self.file_filter.filter_files(file_changes)
@@ -99,9 +96,7 @@ class MRReviewService:
         comments_failed = 0
 
         for i, file_change in enumerate(filtered_files, 1):
-            logger.info(
-                f"Processing file {i}/{len(filtered_files)}: {file_change.path}"
-            )
+            logger.info(f"Processing file {i}/{len(filtered_files)}: {file_change.path}")
 
             try:
                 # Review file
@@ -115,7 +110,11 @@ class MRReviewService:
 
                 # Post comments to GitLab
                 # Pass original file_change to preserve full file content for line_code calculation
-                if post_comments and result.has_comments and self.comment_mode in ("inline", "both"):
+                if (
+                    post_comments
+                    and result.has_comments
+                    and self.comment_mode in ("inline", "both")
+                ):
                     posted, failed = self._post_comments_to_gitlab(
                         project_id, merge_request_iid, result, file_change
                     )
@@ -123,9 +122,7 @@ class MRReviewService:
                     comments_failed += failed
 
             except Exception as e:
-                logger.error(
-                    f"Error processing file {file_change.path}: {e}", exc_info=True
-                )
+                logger.error(f"Error processing file {file_change.path}: {e}", exc_info=True)
                 continue
 
         # Post summary comment if there are results and mode allows it
@@ -148,16 +145,20 @@ class MRReviewService:
         return stats
 
     def _post_comments_to_gitlab(
-        self, project_id: str, merge_request_iid: int, result: ReviewResult, original_file_change: FileChange
+        self,
+        project_id: str,
+        merge_request_iid: int,
+        result: ReviewResult,
+        original_file_change: FileChange,
     ) -> tuple[int, int]:
         """Post comments from review result to GitLab
-        
+
         Args:
             project_id: Project ID
             merge_request_iid: Merge request IID
             result: Review result
             original_file_change: Original FileChange (preserves full file content)
-            
+
         Returns:
             Tuple of (posted_count, failed_count)
         """
@@ -168,7 +169,7 @@ class MRReviewService:
         # Use original file_change content for line_code calculation (preserves full file content)
         # When chunking is used, result.file_change.new_content contains only the last chunk
         file_content = original_file_change.new_content if original_file_change else None
-        
+
         # Log for debugging
         if not file_content:
             logger.warning(
@@ -181,7 +182,7 @@ class MRReviewService:
                 f"{result.file_change.path} ({len(file_content)} chars, "
                 f"{len(file_content.split(chr(10)))} lines)"
             )
-        
+
         # Debug: log all comments to understand what we have
         all_comments_count = len(result.comments)
         inline_comments_count = len(result.inline_comments)
@@ -190,7 +191,7 @@ class MRReviewService:
             f"{all_comments_count} total comments, {inline_comments_count} inline comments. "
             f"Comment details: {[(c.line_number, len(c.content)) for c in result.comments]}"
         )
-        
+
         for comment in result.inline_comments:
             try:
                 success = self.gitlab_client.post_comment(
@@ -215,12 +216,12 @@ class MRReviewService:
         self, project_id: str, merge_request_iid: int, results: List[ReviewResult]
     ) -> bool:
         """Post summary comment to merge request
-        
+
         Args:
             project_id: Project ID
             merge_request_iid: Merge request IID
             results: List of review results
-            
+
         Returns:
             True if summary was posted successfully
         """

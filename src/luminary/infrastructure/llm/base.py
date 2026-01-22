@@ -9,10 +9,10 @@ class LLMProvider(ABC):
 
     def __init__(self, config: Dict[str, Any]):
         """Initialize provider with configuration
-        
+
         Args:
             config: Provider configuration dictionary
-            
+
         Raises:
             ValueError: If configuration is invalid
         """
@@ -21,10 +21,10 @@ class LLMProvider(ABC):
 
     def _validate_config(self, config: Dict[str, Any]) -> None:
         """Validate provider configuration
-        
+
         Args:
             config: Configuration dictionary
-            
+
         Raises:
             ValueError: If configuration is invalid
         """
@@ -34,14 +34,14 @@ class LLMProvider(ABC):
     @abstractmethod
     def generate(self, prompt: str, **kwargs) -> str:
         """Generate response from LLM
-        
+
         Args:
             prompt: Input prompt
             **kwargs: Additional parameters (temperature, max_tokens, etc.)
-            
+
         Returns:
             Generated text response
-            
+
         Raises:
             RuntimeError: If generation fails
         """

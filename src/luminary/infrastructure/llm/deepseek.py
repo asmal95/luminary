@@ -20,4 +20,3 @@ class DeepSeekProvider(OpenAICompatibleChatProvider):
             default_model="deepseek-chat",
             require_api_key=True,
         )
-

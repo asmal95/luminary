@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 class IgnoreConfig(BaseModel):
     """Configuration for file filtering.
-    
+
     Attributes:
         patterns: Glob patterns to ignore
         binary_files: Whether to ignore binary files

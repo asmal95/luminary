@@ -186,9 +186,9 @@ Create `.ai-reviewer.yml` in project root. See `examples/ai-reviewer-config-java
 **Key sections:**
 - `llm` - LLM provider settings (provider, model, temperature, max_tokens, top_p)
 - `validator` - Comment validation settings (enabled, provider, model, threshold)
-- `comments` - Comment mode (inline/summary/both), severity_levels, markdown
+- `comments` - Comment mode (inline/summary/both)
 - `limits` - Processing limits (max_files, max_lines, max_context_tokens, chunk_overlap_size)
-- `retry` - Retry strategy (max_attempts, backoff_multiplier, initial_delay)
+- `retry` - Retry strategy (max_attempts, backoff_multiplier, initial_delay, jitter)
 - `ignore` - File filtering patterns (patterns list, binary_files boolean)
 - `prompts` - Custom prompt templates (review, validation)
 - `gitlab` - GitLab settings (url, token)
@@ -360,13 +360,16 @@ The project includes `.gitlab-ci.yml` with three stages:
 
 ## Known Issues and Future Improvements
 
-See `docs/ARCHITECTURE_SUMMARY.md` for detailed recommendations:
+See `SIMPLIFICATIONS.md` for recent improvements and `docs/ARCHITECTURE_SUMMARY.md` for detailed recommendations:
 
 1. ~~**Retry logic duplication**~~ ✅ **Resolved** - Unified using `tenacity` library
 2. ~~**Configuration validation**~~ ✅ **Resolved** - Implemented using `pydantic>=2.0` with typed models
-3. **Prompt templating** - Consider migrating to Jinja2 for complex templates
-4. **Async support** - Consider migrating to `httpx` or `aiohttp` for async HTTP
-5. **Parallel processing** - Currently sequential, could be parallelized
+3. ~~**Configuration duplication**~~ ✅ **Resolved** - Removed DEFAULT_CONFIG, using Pydantic defaults only
+4. ~~**Unused config options**~~ ✅ **Resolved** - Removed `severity_levels` and `markdown` from CommentsConfig
+5. ~~**Complex validation parsing**~~ ✅ **Resolved** - Refactored into smaller, focused methods
+6. **Prompt templating** - Consider migrating to Jinja2 for complex templates
+7. **Async support** - Consider migrating to `httpx` or `aiohttp` for async HTTP
+8. **Parallel processing** - Currently sequential, could be parallelized
 
 ## Documentation
 

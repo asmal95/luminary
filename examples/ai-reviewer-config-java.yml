@@ -43,8 +43,6 @@ limits:
 # Режим комментариев
 comments:
   mode: both  # inline | summary | both
-  severity_levels: true
-  markdown: true
 
 # Retry стратегия для API вызовов
 retry:

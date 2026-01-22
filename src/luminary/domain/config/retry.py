@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 class RetryConfig(BaseModel):
     """Configuration for retry logic.
-    
+
     Attributes:
         max_attempts: Maximum number of retry attempts
         initial_delay: Initial delay in seconds
