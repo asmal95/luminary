@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import logging
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import click
-from click.testing import CliRunner
 import pytest
+from click.testing import CliRunner
 
-from luminary.cli import _die, cli, file, main, mr, parse_file_or_diff, setup_logging
+from luminary.cli import _die, cli, main, parse_file_or_diff, setup_logging
 from luminary.domain.config.comments import CommentsConfig
 from luminary.domain.config.ignore import IgnoreConfig
 from luminary.domain.config.limits import LimitsConfig
@@ -69,9 +68,9 @@ class TestParseFileOrDiff:
         """Test parsing regular file"""
         test_file = tmp_path / "test.py"
         test_file.write_text("print('hello')\n", encoding="utf-8")
-        
+
         result = parse_file_or_diff(test_file)
-        
+
         assert isinstance(result, FileChange)
         assert result.path == str(test_file)
         assert result.new_content == "print('hello')\n"
@@ -87,9 +86,9 @@ class TestParseFileOrDiff:
 +print('added')
 """
         diff_file.write_text(diff_content, encoding="utf-8")
-        
+
         result = parse_file_or_diff(diff_file)
-        
+
         assert isinstance(result, FileChange)
         assert len(result.hunks) > 0
 
@@ -99,9 +98,9 @@ class TestParseFileOrDiff:
         # File starting with --- but not +++ on next line is treated as diff
         # So we test with a file that doesn't start with --- or +++
         test_file.write_text("# This is not a diff\nprint('hello')\n", encoding="utf-8")
-        
+
         result = parse_file_or_diff(test_file)
-        
+
         assert isinstance(result, FileChange)
         assert result.new_content is not None
 
@@ -142,7 +141,7 @@ class TestFileCommand:
 
         test_file = tmp_path / "test.py"
         test_file.write_text("print('hello')\n", encoding="utf-8")
-        
+
         mock_file_change = FileChange(path=str(test_file), new_content="print('hello')\n")
         mock_parse.return_value = mock_file_change
 
@@ -157,9 +156,7 @@ class TestFileCommand:
     @patch("luminary.cli.ConfigManager")
     @patch("luminary.cli.LLMProviderFactory")
     @patch("luminary.cli.parse_file_or_diff")
-    def test_file_command_with_error(
-        self, mock_parse, mock_factory, mock_config_manager, tmp_path
-    ):
+    def test_file_command_with_error(self, mock_parse, mock_factory, mock_config_manager, tmp_path):
         """Test file command with error"""
         mock_config = MagicMock()
         mock_config.get_llm_config.return_value = LLMConfig(provider="mock")
@@ -187,7 +184,13 @@ class TestFileCommand:
     @patch("luminary.cli.ReviewService")
     @patch("luminary.cli.parse_file_or_diff")
     def test_file_command_with_validator(
-        self, mock_parse, mock_review_service, mock_validator_class, mock_factory, mock_config_manager, tmp_path
+        self,
+        mock_parse,
+        mock_review_service,
+        mock_validator_class,
+        mock_factory,
+        mock_config_manager,
+        tmp_path,
     ):
         """Test file command with validator enabled"""
         mock_config = MagicMock()
@@ -222,7 +225,7 @@ class TestFileCommand:
 
         test_file = tmp_path / "test.py"
         test_file.write_text("print('hello')\n", encoding="utf-8")
-        
+
         mock_file_change = FileChange(path=str(test_file), new_content="print('hello')\n")
         mock_parse.return_value = mock_file_change
 
@@ -292,9 +295,7 @@ class TestMRCommand:
         with patch("luminary.cli.GitLabClient") as mock_gitlab:
             mock_gitlab.return_value = mock_gitlab
             with patch("click.echo") as mock_echo:
-                result = runner.invoke(
-                    cli, ["mr", "group/project", "123"]
-                )
+                result = runner.invoke(cli, ["mr", "group/project", "123"])
                 # Command should succeed
                 if result.exit_code != 0:
                     print("\n=== CLI Output ===")
@@ -302,7 +303,16 @@ class TestMRCommand:
                     if result.exception:
                         print("\n=== Exception ===")
                         import traceback
-                        print(''.join(traceback.format_exception(type(result.exception), result.exception, result.exception.__traceback__)))
+
+                        print(
+                            "".join(
+                                traceback.format_exception(
+                                    type(result.exception),
+                                    result.exception,
+                                    result.exception.__traceback__,
+                                )
+                            )
+                        )
                 assert result.exit_code == 0
                 assert mock_echo.called
 
@@ -332,7 +342,9 @@ class TestMRCommand:
     @patch("luminary.cli.ConfigManager")
     @patch("luminary.cli.LLMProviderFactory")
     @patch("luminary.cli.GitLabClient")
-    def test_mr_command_with_gitlab_error(self, mock_gitlab_class, mock_factory, mock_config_manager):
+    def test_mr_command_with_gitlab_error(
+        self, mock_gitlab_class, mock_factory, mock_config_manager
+    ):
         """Test mr command with GitLab client error"""
         mock_config = MagicMock()
         mock_config.get_llm_config.return_value = LLMConfig(provider="mock")

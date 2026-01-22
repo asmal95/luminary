@@ -75,7 +75,7 @@ def _create_provider_config(config_manager: ConfigManager) -> dict:
     """
     llm_config = config_manager.get_llm_config()
     retry_config = config_manager.get_retry_config()
-    
+
     provider_config = {
         "model": llm_config.model,
         "temperature": llm_config.temperature,
@@ -350,7 +350,8 @@ def mr(
         try:
             from luminary.infrastructure.http_client import retry_config_from_dict
 
-            retry_config_obj = retry_config_from_dict(retry_config)
+            # Convert Pydantic model to dict for http_client
+            retry_config_obj = retry_config_from_dict(retry_config.model_dump())
             gitlab_client = GitLabClient(
                 gitlab_url=gitlab_url,
                 retry_config=retry_config_obj,

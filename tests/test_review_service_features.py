@@ -18,18 +18,15 @@ class DummyCountingProvider(LLMProvider):
         # Extract first absolute line number from code block, if present
         m = re.search(r"```\n(\d+):", prompt)
         line_no = int(m.group(1)) if m else 1
-        
+
         # Check if summary is requested (prompt contains "summary only")
         wants_summary = "summary only" in prompt.lower()
         wants_inline = "inline comments only" in prompt.lower()
-        
+
         # Build JSON response
         if wants_summary:
             # Summary only mode - return object with empty comments and summary
-            response = {
-                "comments": [],
-                "summary": f"Chunk {self.calls} summary."
-            }
+            response = {"comments": [], "summary": f"Chunk {self.calls} summary."}
         elif wants_inline:
             # Inline only mode - return array with comments only
             response = [
@@ -37,7 +34,7 @@ class DummyCountingProvider(LLMProvider):
                     "file": "example.py",
                     "line": line_no,
                     "message": f"Test comment for chunk {self.calls}.",
-                    "suggestion": None
+                    "suggestion": None,
                 }
             ]
         else:
@@ -48,12 +45,12 @@ class DummyCountingProvider(LLMProvider):
                         "file": "example.py",
                         "line": line_no,
                         "message": f"Test comment for chunk {self.calls}.",
-                        "suggestion": None
+                        "suggestion": None,
                     }
                 ],
-                "summary": f"Chunk {self.calls} summary."
+                "summary": f"Chunk {self.calls} summary.",
             }
-        
+
         return json.dumps(response)
 
 
@@ -89,4 +86,3 @@ def test_review_service_chunking_triggers_multiple_llm_calls():
     assert provider.calls > 1
     assert len(res.comments) > 1
     assert all(c.line_number is not None for c in res.comments)
-

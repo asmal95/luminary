@@ -7,4 +7,3 @@ def test_factory_supports_providers():
     assert LLMProviderFactory.create("deepseek", {"api_key": "test"}) is not None
     assert LLMProviderFactory.create("openrouter", {"api_key": "test"}) is not None
     assert LLMProviderFactory.create("vllm", {"model": "local-model"}) is not None
-

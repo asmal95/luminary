@@ -203,7 +203,7 @@ class TestConfigManagerValidation:
                 "temperature": 0.7,
             }
         }
-        
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
             yaml.dump(config_data, f)
             config_path = f.name
@@ -221,7 +221,7 @@ class TestConfigManagerValidation:
                 "temperature": 5.0,  # Invalid: above maximum
             }
         }
-        
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
             yaml.dump(config_data, f)
             config_path = f.name
@@ -241,7 +241,7 @@ class TestConfigManagerValidation:
     def test_get_typed_config_sections(self):
         """Test getter methods return typed models"""
         manager = ConfigManager()
-        
+
         assert isinstance(manager.get_llm_config(), LLMConfig)
         assert isinstance(manager.get_validator_config(), ValidatorConfig)
         assert isinstance(manager.get_gitlab_config(), GitLabConfig)
@@ -255,7 +255,7 @@ class TestConfigManagerValidation:
         """Test environment variable overrides"""
         monkeypatch.setenv("LUMINARY_LLM_PROVIDER", "openai")
         monkeypatch.setenv("LUMINARY_LLM_MODEL", "gpt-4")
-        
+
         manager = ConfigManager()
         assert manager.config.llm.provider == "openai"
         assert manager.config.llm.model == "gpt-4"

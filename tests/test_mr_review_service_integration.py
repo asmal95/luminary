@@ -30,7 +30,9 @@ class FakeGitLabClient:
         self._file_changes = file_changes
         self.posted: List[Posted] = []
 
-    def get_merge_request_changes(self, project_id: str, merge_request_iid: int) -> List[FileChange]:
+    def get_merge_request_changes(
+        self, project_id: str, merge_request_iid: int
+    ) -> List[FileChange]:
         return list(self._file_changes)
 
     def post_comment(
@@ -47,7 +49,9 @@ class FakeGitLabClient:
 
 
 def test_mr_review_service_respects_comment_mode_summary_only():
-    fc = FileChange(path="a.py", new_content="print('x')\n", hunks=[Hunk(1, 1, 1, 1, ["+print('x')"])])
+    fc = FileChange(
+        path="a.py", new_content="print('x')\n", hunks=[Hunk(1, 1, 1, 1, ["+print('x')"])]
+    )
     fake_gitlab = FakeGitLabClient([fc])
 
     provider = DummyProvider()
@@ -66,4 +70,3 @@ def test_mr_review_service_respects_comment_mode_summary_only():
     # Summary should be posted, but no inline comments
     assert any(p.line_number is None for p in fake_gitlab.posted)
     assert not any(p.line_number is not None for p in fake_gitlab.posted)
-

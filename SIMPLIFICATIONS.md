@@ -67,6 +67,26 @@
 
 **Результат:** Чистый код без предупреждений линтера.
 
+### 6. ✅ Исправлен баг использования Pydantic моделей вместо словарей
+
+**Проблема:** После упрощения `ConfigManager` геттеры возвращают Pydantic модели, но код ожидал словари и вызывал `.get()`.
+
+**Ошибки:**
+- `'LLMConfig' object has no attribute 'get'`
+- `'RetryConfig' object has no attribute 'get'`
+
+**Решение:**
+- Заменил `.get()` на прямой доступ к атрибутам Pydantic моделей
+- Обновил все места в `cli.py`:
+  - `llm_config.provider` вместо `llm_config.get("provider")`
+  - `validator_config.enabled` вместо `validator_config.get("enabled")`
+  - `comments_config.mode` вместо `comments_config.get("mode")`
+  - И т.д.
+- Добавил `retry_config.model_dump()` при передаче в `retry_config_from_dict()`
+- Обновил все тесты - моки теперь используют Pydantic модели вместо словарей
+
+**Результат:** Все тесты проходят, код работает с реальной конфигурацией.
+
 ---
 
 ## Статистика
@@ -75,6 +95,8 @@
 - **Упрощено методов:** 1 (comment_validator)
 - **Устранено дублирований:** 2 (DEFAULT_CONFIG, provider_config)
 - **Удалено неиспользуемых настроек:** 2 (severity_levels, markdown)
+- **Исправлено багов:** 1 (Pydantic модели вместо словарей)
+- **Обновлено тестов:** Все моки используют Pydantic модели
 - **Все тесты:** ✅ Прошли (134/134)
 
 ---

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import Mock
 
 import pytest
 import requests
@@ -108,4 +107,3 @@ def test_post_json_with_custom_backoff_multiplier(monkeypatch):
     )
     assert resp.status_code == 200
     assert calls["n"] == 3
-
