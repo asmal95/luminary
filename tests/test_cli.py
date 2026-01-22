@@ -12,6 +12,13 @@ from click.testing import CliRunner
 import pytest
 
 from luminary.cli import _die, cli, file, main, mr, parse_file_or_diff, setup_logging
+from luminary.domain.config.comments import CommentsConfig
+from luminary.domain.config.ignore import IgnoreConfig
+from luminary.domain.config.limits import LimitsConfig
+from luminary.domain.config.llm import LLMConfig
+from luminary.domain.config.prompts import PromptsConfig
+from luminary.domain.config.retry import RetryConfig
+from luminary.domain.config.validator import ValidatorConfig
 from luminary.domain.models.file_change import FileChange
 
 
@@ -112,12 +119,12 @@ class TestFileCommand:
         """Test successful file command execution"""
         # Setup mocks
         mock_config = MagicMock()
-        mock_config.get_llm_config.return_value = {"provider": "mock"}
-        mock_config.get_validator_config.return_value = {"enabled": False}
-        mock_config.get_comments_config.return_value = {"mode": "both"}
-        mock_config.get_limits_config.return_value = {}
-        mock_config.get_prompts_config.return_value = {}
-        mock_config.get_retry_config.return_value = {}
+        mock_config.get_llm_config.return_value = LLMConfig(provider="mock")
+        mock_config.get_validator_config.return_value = ValidatorConfig(enabled=False)
+        mock_config.get_comments_config.return_value = CommentsConfig(mode="both")
+        mock_config.get_limits_config.return_value = LimitsConfig()
+        mock_config.get_prompts_config.return_value = PromptsConfig()
+        mock_config.get_retry_config.return_value = RetryConfig()
         mock_config_manager.return_value = mock_config
 
         mock_provider = MagicMock()
@@ -155,12 +162,12 @@ class TestFileCommand:
     ):
         """Test file command with error"""
         mock_config = MagicMock()
-        mock_config.get_llm_config.return_value = {"provider": "mock"}
-        mock_config.get_validator_config.return_value = {"enabled": False}
-        mock_config.get_comments_config.return_value = {"mode": "both"}
-        mock_config.get_limits_config.return_value = {}
-        mock_config.get_prompts_config.return_value = {}
-        mock_config.get_retry_config.return_value = {}
+        mock_config.get_llm_config.return_value = LLMConfig(provider="mock")
+        mock_config.get_validator_config.return_value = ValidatorConfig(enabled=False)
+        mock_config.get_comments_config.return_value = CommentsConfig(mode="both")
+        mock_config.get_limits_config.return_value = LimitsConfig()
+        mock_config.get_prompts_config.return_value = PromptsConfig()
+        mock_config.get_retry_config.return_value = RetryConfig()
         mock_config_manager.return_value = mock_config
 
         mock_factory.create.side_effect = ValueError("Invalid provider")
@@ -184,16 +191,16 @@ class TestFileCommand:
     ):
         """Test file command with validator enabled"""
         mock_config = MagicMock()
-        mock_config.get_llm_config.return_value = {"provider": "mock"}
-        mock_config.get_validator_config.return_value = {
-            "enabled": True,
-            "provider": "mock",
-            "threshold": 0.7,
-        }
-        mock_config.get_comments_config.return_value = {"mode": "both"}
-        mock_config.get_limits_config.return_value = {}
-        mock_config.get_prompts_config.return_value = {}
-        mock_config.get_retry_config.return_value = {}
+        mock_config.get_llm_config.return_value = LLMConfig(provider="mock")
+        mock_config.get_validator_config.return_value = ValidatorConfig(
+            enabled=True,
+            provider="mock",
+            threshold=0.7,
+        )
+        mock_config.get_comments_config.return_value = CommentsConfig(mode="both")
+        mock_config.get_limits_config.return_value = LimitsConfig()
+        mock_config.get_prompts_config.return_value = PromptsConfig()
+        mock_config.get_retry_config.return_value = RetryConfig()
         mock_config_manager.return_value = mock_config
 
         mock_provider = MagicMock()
@@ -247,13 +254,13 @@ class TestMRCommand:
         """Test successful mr command execution"""
         # Setup mocks
         mock_config = MagicMock()
-        mock_config.get_llm_config.return_value = {"provider": "mock"}
-        mock_config.get_validator_config.return_value = {"enabled": False}
-        mock_config.config.get.return_value = {"patterns": [], "binary_files": True}
-        mock_config.get_comments_config.return_value = {"mode": "both"}
-        mock_config.get_limits_config.return_value = {}
-        mock_config.get_prompts_config.return_value = {}
-        mock_config.get_retry_config.return_value = {"max_attempts": 3, "initial_delay": 1.0}
+        mock_config.get_llm_config.return_value = LLMConfig(provider="mock")
+        mock_config.get_validator_config.return_value = ValidatorConfig(enabled=False)
+        mock_config.get_ignore_config.return_value = IgnoreConfig(patterns=[], binary_files=True)
+        mock_config.get_comments_config.return_value = CommentsConfig(mode="both")
+        mock_config.get_limits_config.return_value = LimitsConfig()
+        mock_config.get_prompts_config.return_value = PromptsConfig()
+        mock_config.get_retry_config.return_value = RetryConfig(max_attempts=3, initial_delay=1.0)
         mock_config_manager.return_value = mock_config
 
         mock_provider = MagicMock()
@@ -286,9 +293,16 @@ class TestMRCommand:
             mock_gitlab.return_value = mock_gitlab
             with patch("click.echo") as mock_echo:
                 result = runner.invoke(
-                    cli, ["mr", "group/project", "123"], catch_exceptions=False
+                    cli, ["mr", "group/project", "123"]
                 )
                 # Command should succeed
+                if result.exit_code != 0:
+                    print("\n=== CLI Output ===")
+                    print(result.output)
+                    if result.exception:
+                        print("\n=== Exception ===")
+                        import traceback
+                        print(''.join(traceback.format_exception(type(result.exception), result.exception, result.exception.__traceback__)))
                 assert result.exit_code == 0
                 assert mock_echo.called
 
@@ -297,13 +311,14 @@ class TestMRCommand:
     def test_mr_command_with_invalid_provider(self, mock_factory, mock_config_manager):
         """Test mr command with invalid provider"""
         mock_config = MagicMock()
-        mock_config.get_llm_config.return_value = {"provider": "invalid"}
-        mock_config.get_validator_config.return_value = {"enabled": False}
-        mock_config.config.get.return_value = {}
-        mock_config.get_comments_config.return_value = {}
-        mock_config.get_limits_config.return_value = {}
-        mock_config.get_prompts_config.return_value = {}
-        mock_config.get_retry_config.return_value = {}
+        # Use valid provider in config, factory will raise error
+        mock_config.get_llm_config.return_value = LLMConfig(provider="mock")
+        mock_config.get_validator_config.return_value = ValidatorConfig(enabled=False)
+        mock_config.get_ignore_config.return_value = IgnoreConfig()
+        mock_config.get_comments_config.return_value = CommentsConfig()
+        mock_config.get_limits_config.return_value = LimitsConfig()
+        mock_config.get_prompts_config.return_value = PromptsConfig()
+        mock_config.get_retry_config.return_value = RetryConfig()
         mock_config_manager.return_value = mock_config
 
         mock_factory.create.side_effect = ValueError("Invalid provider")
@@ -320,13 +335,13 @@ class TestMRCommand:
     def test_mr_command_with_gitlab_error(self, mock_gitlab_class, mock_factory, mock_config_manager):
         """Test mr command with GitLab client error"""
         mock_config = MagicMock()
-        mock_config.get_llm_config.return_value = {"provider": "mock"}
-        mock_config.get_validator_config.return_value = {"enabled": False}
-        mock_config.config.get.return_value = {}
-        mock_config.get_comments_config.return_value = {}
-        mock_config.get_limits_config.return_value = {}
-        mock_config.get_prompts_config.return_value = {}
-        mock_config.get_retry_config.return_value = {}
+        mock_config.get_llm_config.return_value = LLMConfig(provider="mock")
+        mock_config.get_validator_config.return_value = ValidatorConfig(enabled=False)
+        mock_config.get_ignore_config.return_value = IgnoreConfig()
+        mock_config.get_comments_config.return_value = CommentsConfig()
+        mock_config.get_limits_config.return_value = LimitsConfig()
+        mock_config.get_prompts_config.return_value = PromptsConfig()
+        mock_config.get_retry_config.return_value = RetryConfig()
         mock_config_manager.return_value = mock_config
 
         mock_provider = MagicMock()
@@ -357,13 +372,13 @@ class TestMRCommand:
     ):
         """Test mr command with dry run (no-post)"""
         mock_config = MagicMock()
-        mock_config.get_llm_config.return_value = {"provider": "mock"}
-        mock_config.get_validator_config.return_value = {"enabled": False}
-        mock_config.config.get.return_value = {}
-        mock_config.get_comments_config.return_value = {}
-        mock_config.get_limits_config.return_value = {}
-        mock_config.get_prompts_config.return_value = {}
-        mock_config.get_retry_config.return_value = {}
+        mock_config.get_llm_config.return_value = LLMConfig(provider="mock")
+        mock_config.get_validator_config.return_value = ValidatorConfig(enabled=False)
+        mock_config.get_ignore_config.return_value = IgnoreConfig()
+        mock_config.get_comments_config.return_value = CommentsConfig()
+        mock_config.get_limits_config.return_value = LimitsConfig()
+        mock_config.get_prompts_config.return_value = PromptsConfig()
+        mock_config.get_retry_config.return_value = RetryConfig()
         mock_config_manager.return_value = mock_config
 
         mock_provider = MagicMock()

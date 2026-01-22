@@ -74,13 +74,16 @@ def _create_provider_config(config_manager: ConfigManager) -> dict:
         Provider configuration dictionary
     """
     llm_config = config_manager.get_llm_config()
+    retry_config = config_manager.get_retry_config()
+    
     provider_config = {
-        "model": llm_config.get("model"),
-        "temperature": llm_config.get("temperature"),
-        "max_tokens": llm_config.get("max_tokens"),
-        "top_p": llm_config.get("top_p"),
+        "model": llm_config.model,
+        "temperature": llm_config.temperature,
+        "max_tokens": llm_config.max_tokens,
+        "top_p": llm_config.top_p,
     }
-    provider_config.update(config_manager.get_retry_config())
+    # Add retry config fields
+    provider_config.update(retry_config.model_dump())
     return provider_config
 
 
@@ -100,7 +103,7 @@ def _create_llm_provider(
         LLM provider instance
     """
     llm_config = config_manager.get_llm_config()
-    provider_type = provider_override or llm_config.get("provider", "mock")
+    provider_type = provider_override or llm_config.provider
     logger.info(f"Using LLM provider: {provider_type}")
 
     provider_config = _create_provider_config(config_manager)
@@ -131,12 +134,12 @@ def _create_validator(
         CommentValidator instance or None
     """
     validator_config = config_manager.get_validator_config()
-    if no_validate or not validator_config.get("enabled", False):
+    if no_validate or not validator_config.enabled:
         return None
 
-    validator_provider_type = validator_config.get("provider") or None
-    validator_model = validator_config.get("model")
-    validator_threshold = validator_config.get("threshold", 0.7)
+    validator_provider_type = validator_config.provider
+    validator_model = validator_config.model
+    validator_threshold = validator_config.threshold
 
     validator_provider_config = provider_config.copy()
     if validator_model:
@@ -157,7 +160,7 @@ def _create_validator(
     validator = CommentValidator(
         validator_llm,
         threshold=validator_threshold,
-        custom_prompt=prompts_config.get("validation"),
+        custom_prompt=prompts_config.validation,
     )
     logger.info("Comment validation enabled")
     return validator
@@ -184,14 +187,14 @@ def _create_review_service(
     limits_config = config_manager.get_limits_config()
     prompts_config = config_manager.get_prompts_config()
 
-    mode = (comments_mode_override or comments_config.get("mode", "both")).lower()
+    mode = (comments_mode_override or comments_config.mode).lower()
     return ReviewService(
         llm_provider,
         validator=validator,
-        custom_review_prompt=prompts_config.get("review"),
+        custom_review_prompt=prompts_config.review,
         comment_mode=mode,
-        max_context_tokens=limits_config.get("max_context_tokens"),
-        chunk_overlap_lines=limits_config.get("chunk_overlap_size", 200),
+        max_context_tokens=limits_config.max_context_tokens,
+        chunk_overlap_lines=limits_config.chunk_overlap_size,
     )
 
 
@@ -356,23 +359,23 @@ def mr(
             _die(str(e), verbose=verbose_mode, exc=e)
 
         # Create file filter
-        ignore_config = config_manager.config.get("ignore", {})
+        ignore_config = config_manager.get_ignore_config()
         file_filter = FileFilter(
-            ignore_patterns=ignore_config.get("patterns", []),
-            ignore_binary=ignore_config.get("binary_files", True),
+            ignore_patterns=ignore_config.patterns,
+            ignore_binary=ignore_config.binary_files,
         )
 
         # Create MR review service
         limits_config = config_manager.get_limits_config()
         comments_config = config_manager.get_comments_config()
-        mode = (comments_mode or comments_config.get("mode", "both")).lower()
+        mode = (comments_mode or comments_config.mode).lower()
         mr_review_service = MRReviewService(
             llm_provider=llm_provider,
             gitlab_client=gitlab_client,
             file_filter=file_filter,
             review_service=review_service,
-            max_files=limits_config.get("max_files"),
-            max_lines=limits_config.get("max_lines"),
+            max_files=limits_config.max_files,
+            max_lines=limits_config.max_lines,
             comment_mode=mode,
         )
 
