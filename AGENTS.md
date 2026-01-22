@@ -172,10 +172,12 @@ src/luminary/
 
 Configuration is merged in this order (later overrides earlier):
 
-1. **Default values** (hardcoded in `ConfigManager.DEFAULT_CONFIG`)
+1. **Default values** (defined in Pydantic models in `domain/config/`)
 2. **`.ai-reviewer.yml` file** (searched from current directory up to root)
 3. **Environment variables** (`LUMINARY_*`, `GITLAB_*`, provider-specific keys)
 4. **CLI arguments** (highest priority)
+
+**Note:** Configuration is validated at load time using Pydantic models. Invalid configurations will fail immediately with clear error messages.
 
 ### Configuration File
 
@@ -361,7 +363,7 @@ The project includes `.gitlab-ci.yml` with three stages:
 See `docs/ARCHITECTURE_SUMMARY.md` for detailed recommendations:
 
 1. ~~**Retry logic duplication**~~ ✅ **Resolved** - Unified using `tenacity` library
-2. **Configuration validation** - Consider using `pydantic` for schema validation
+2. ~~**Configuration validation**~~ ✅ **Resolved** - Implemented using `pydantic>=2.0` with typed models
 3. **Prompt templating** - Consider migrating to Jinja2 for complex templates
 4. **Async support** - Consider migrating to `httpx` or `aiohttp` for async HTTP
 5. **Parallel processing** - Currently sequential, could be parallelized

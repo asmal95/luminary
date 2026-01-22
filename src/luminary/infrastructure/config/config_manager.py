@@ -7,13 +7,40 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
+from pydantic import ValidationError
+
+from luminary.domain.config import (
+    AppConfig,
+    CommentsConfig,
+    GitLabConfig,
+    IgnoreConfig,
+    LimitsConfig,
+    LLMConfig,
+    PromptsConfig,
+    RetryConfig,
+    ValidatorConfig,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class ConfigManager:
-    """Manages configuration from .ai-reviewer.yml and environment variables"""
+class ConfigurationError(Exception):
+    """Configuration validation error."""
 
+    pass
+
+
+class ConfigManager:
+    """Manages configuration from .ai-reviewer.yml and environment variables
+    
+    Loads configuration with validation using Pydantic models. Configuration priority:
+    1. Default values (defined in Pydantic models)
+    2. .ai-reviewer.yml file (searched from current directory)
+    3. Environment variables (LUMINARY_*, GITLAB_*)
+    4. CLI arguments (handled by CLI layer)
+    """
+
+    # Legacy DEFAULT_CONFIG for backward compatibility
     DEFAULT_CONFIG = {
         "llm": {
             "provider": "mock",
@@ -24,13 +51,13 @@ class ConfigManager:
         },
         "validator": {
             "enabled": False,
-            "provider": None,  # Uses same as llm if None
+            "provider": None,
             "model": None,
             "threshold": 0.7,
         },
         "gitlab": {
-            "url": None,  # None = from GITLAB_URL env or gitlab.com
-            "token": None,  # None = from GITLAB_TOKEN env
+            "url": None,
+            "token": None,
         },
         "ignore": {
             "patterns": [
@@ -47,16 +74,16 @@ class ConfigManager:
             "max_files": None,
             "max_lines": None,
             "max_context_tokens": None,
-            "chunk_overlap_size": 200,  # lines, used when chunking
+            "chunk_overlap_size": 200,
         },
         "comments": {
-            "mode": "both",  # inline, summary, both
+            "mode": "both",
             "severity_levels": True,
             "markdown": True,
         },
         "prompts": {
-            "review": None,  # optional string template override
-            "validation": None,  # optional string template override
+            "review": None,
+            "validation": None,
         },
         "retry": {
             "max_attempts": 3,
@@ -71,9 +98,26 @@ class ConfigManager:
         
         Args:
             config_path: Path to .ai-reviewer.yml (searches from current dir if None)
+            
+        Raises:
+            ConfigurationError: If configuration validation fails
         """
+        # Convert to Path if string
+        if isinstance(config_path, str):
+            config_path = Path(config_path)
         self.config_path = config_path or self._find_config_file()
-        self.config = self._load_config()
+        try:
+            self.config: AppConfig = self._load_config()
+        except ValidationError as e:
+            # Format validation errors for user
+            errors = []
+            for error in e.errors():
+                field = ".".join(str(x) for x in error["loc"])
+                msg = error["msg"]
+                errors.append(f"  - {field}: {msg}")
+            raise ConfigurationError(
+                f"Configuration validation failed:\n" + "\n".join(errors)
+            ) from e
 
     def _find_config_file(self) -> Optional[Path]:
         """Find .ai-reviewer.yml file starting from current directory
@@ -90,28 +134,32 @@ class ConfigManager:
         logger.debug("No .ai-reviewer.yml found, using defaults")
         return None
 
-    def _load_config(self) -> Dict[str, Any]:
-        """Load configuration from file and merge with defaults
+    def _load_config(self) -> AppConfig:
+        """Load configuration from file and validate with Pydantic
         
         Returns:
-            Merged configuration dictionary
+            Validated AppConfig instance
+            
+        Raises:
+            ValidationError: If configuration is invalid
         """
-        config = copy.deepcopy(self.DEFAULT_CONFIG)
+        config_dict = copy.deepcopy(self.DEFAULT_CONFIG)
 
         if self.config_path and self.config_path.exists():
             try:
                 with open(self.config_path, "r", encoding="utf-8") as f:
                     file_config = yaml.safe_load(f) or {}
-                config = self._merge_config(config, file_config)
+                config_dict = self._merge_config(config_dict, file_config)
                 logger.info(f"Loaded configuration from {self.config_path}")
             except Exception as e:
                 logger.warning(f"Failed to load config from {self.config_path}: {e}")
                 logger.info("Using default configuration")
 
         # Override with environment variables
-        config = self._apply_env_overrides(config)
+        config_dict = self._apply_env_overrides(config_dict)
 
-        return config
+        # Validate and create AppConfig
+        return AppConfig(**config_dict)
 
     def _merge_config(self, base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
         """Recursively merge configuration dictionaries
@@ -151,21 +199,29 @@ class ConfigManager:
         # API keys are handled by providers themselves
         return config
 
-    def get_llm_config(self) -> Dict[str, Any]:
+    def get_llm_config(self) -> LLMConfig:
         """Get LLM provider configuration
         
         Returns:
-            LLM configuration dictionary
+            LLM configuration model
         """
-        return self.config.get("llm", {}).copy()
+        return self.config.llm
 
-    def get_validator_config(self) -> Dict[str, Any]:
+    def get_validator_config(self) -> ValidatorConfig:
         """Get validator configuration
         
         Returns:
-            Validator configuration dictionary
+            Validator configuration model
         """
-        return self.config.get("validator", {}).copy()
+        return self.config.validator
+
+    def get_ignore_config(self) -> IgnoreConfig:
+        """Get ignore configuration
+        
+        Returns:
+            Ignore configuration model
+        """
+        return self.config.ignore
 
     def get_ignore_patterns(self) -> list:
         """Get ignore patterns
@@ -173,7 +229,7 @@ class ConfigManager:
         Returns:
             List of ignore patterns
         """
-        return self.config.get("ignore", {}).get("patterns", [])
+        return self.config.ignore.patterns
 
     def should_ignore_binary_files(self) -> bool:
         """Check if binary files should be ignored
@@ -181,35 +237,47 @@ class ConfigManager:
         Returns:
             True if binary files should be ignored
         """
-        return self.config.get("ignore", {}).get("binary_files", True)
+        return self.config.ignore.binary_files
 
-    def get_retry_config(self) -> Dict[str, Any]:
+    def get_retry_config(self) -> RetryConfig:
         """Get retry configuration
         
         Returns:
-            Retry configuration dictionary
+            Retry configuration model
         """
-        return self.config.get("retry", {}).copy()
+        return self.config.retry
 
-    def get_limits_config(self) -> Dict[str, Any]:
-        """Get limits configuration."""
-        return self.config.get("limits", {}).copy()
+    def get_limits_config(self) -> LimitsConfig:
+        """Get limits configuration
+        
+        Returns:
+            Limits configuration model
+        """
+        return self.config.limits
 
-    def get_comments_config(self) -> Dict[str, Any]:
-        """Get comments configuration."""
-        return self.config.get("comments", {}).copy()
+    def get_comments_config(self) -> CommentsConfig:
+        """Get comments configuration
+        
+        Returns:
+            Comments configuration model
+        """
+        return self.config.comments
 
-    def get_prompts_config(self) -> Dict[str, Any]:
-        """Get prompts configuration."""
-        return self.config.get("prompts", {}).copy()
+    def get_prompts_config(self) -> PromptsConfig:
+        """Get prompts configuration
+        
+        Returns:
+            Prompts configuration model
+        """
+        return self.config.prompts
 
-    def get_gitlab_config(self) -> Dict[str, Any]:
+    def get_gitlab_config(self) -> GitLabConfig:
         """Get GitLab configuration
         
         Returns:
-            GitLab configuration dictionary
+            GitLab configuration model
         """
-        return self.config.get("gitlab", {}).copy()
+        return self.config.gitlab
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value by key (supports dot notation)
@@ -222,7 +290,7 @@ class ConfigManager:
             Configuration value or default
         """
         keys = key.split(".")
-        value = self.config
+        value = self.config.model_dump()
         for k in keys:
             if isinstance(value, dict) and k in value:
                 value = value[k]

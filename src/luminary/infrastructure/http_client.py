@@ -6,22 +6,18 @@ We keep HTTP logic centralized to avoid divergence across providers.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import requests
 
+from luminary.domain.config.retry import RetryConfig
 from luminary.infrastructure.retry import _should_retry_http_error
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class RetryConfig:
-    max_attempts: int = 3
-    initial_delay: float = 1.0
-    backoff_multiplier: float = 2.0
-    jitter: float = 0.1  # +/-10% by default
+# Re-export RetryConfig for convenience
+__all__ = ["RetryConfig", "retry_config_from_dict", "post_json_with_retries"]
 
 
 def retry_config_from_dict(config: Dict[str, Any]) -> RetryConfig:
@@ -87,7 +83,20 @@ def post_json_with_retries(
     timeout: float,
     retry: RetryConfig,
 ) -> requests.Response:
-    """POST JSON with retry on network errors, 429 and 5xx."""
+    """POST JSON with retry on network errors, 429 and 5xx.
+    
+    Args:
+        url: URL to POST to
+        payload: JSON payload
+        headers: HTTP headers
+        timeout: Request timeout in seconds
+        retry: Retry configuration (Pydantic model)
+        
+    Returns:
+        Response object
+    """
+    retry_config = retry
+    
     from tenacity import (
         retry as tenacity_retry,
         retry_if_exception,
@@ -112,18 +121,18 @@ def post_json_with_retries(
 
     # Настройка wait с jitter
     wait = wait_exponential(
-        multiplier=retry.initial_delay,
-        exp_base=retry.backoff_multiplier,
-        min=retry.initial_delay,
+        multiplier=retry_config.initial_delay,
+        exp_base=retry_config.backoff_multiplier,
+        min=retry_config.initial_delay,
         max=60.0,
     )
-    if retry.jitter > 0:
-        jitter_amount = retry.initial_delay * retry.jitter
+    if retry_config.jitter > 0:
+        jitter_amount = retry_config.initial_delay * retry_config.jitter
         wait = wait + wait_random(-jitter_amount, jitter_amount)
 
     # Прямое применение декоратора tenacity
     @tenacity_retry(
-        stop=stop_after_attempt(retry.max_attempts),
+        stop=stop_after_attempt(retry_config.max_attempts),
         wait=wait,
         retry=retry_if_exception(_retry_condition),
         reraise=True,

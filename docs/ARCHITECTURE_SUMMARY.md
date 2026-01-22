@@ -178,27 +178,43 @@ decorator = create_retry_decorator(retry_config, retry_condition, before_sleep)
 
 ### 2. Валидация конфигурации
 
-**Проблема:**
-- `ConfigManager` использует простой merge словарей без валидации схемы
-- Ошибки конфигурации обнаруживаются только во время выполнения
-- Нет типизации конфигурации
+**Статус:** ✅ Решено
 
-**Рекомендация:**
-- Использовать `pydantic` для валидации конфигурации
-- Определить схемы для всех секций конфига
+**Решение:**
+- Валидация конфигурации реализована через `pydantic>=2.0`
+- Созданы Pydantic модели для всех секций конфига в `domain/config/`:
+  - `LLMConfig` - настройки LLM провайдера
+  - `ValidatorConfig` - настройки валидации комментариев
+  - `GitLabConfig` - настройки GitLab интеграции
+  - `IgnoreConfig` - паттерны игнорирования файлов
+  - `LimitsConfig` - лимиты обработки
+  - `CommentsConfig` - режимы комментариев
+  - `PromptsConfig` - кастомные промпты
+  - `RetryConfig` - настройки retry логики
+  - `AppConfig` - главная модель, объединяющая все секции
 - Валидация при загрузке конфига (fail-fast подход)
-- Автоматическая генерация документации из схем
+- Улучшенные сообщения об ошибках
+- Обратная совместимость сохранена
 
-**Пример:**
+**Реализация:**
 ```python
-from pydantic import BaseModel, Field
+from luminary.domain.config import AppConfig
+from luminary.infrastructure.config import ConfigManager
 
-class LLMConfig(BaseModel):
-    provider: str = Field(..., pattern="^(mock|openrouter|openai|deepseek|vllm)$")
-    model: str
-    temperature: float = Field(0.7, ge=0.0, le=2.0)
-    max_tokens: int = Field(2000, gt=0)
+# Автоматическая валидация при загрузке
+manager = ConfigManager()  # Raises ConfigurationError if invalid
+config = manager.config  # AppConfig (Pydantic model)
+
+# Типизированный доступ
+llm_config: LLMConfig = manager.get_llm_config()
+print(llm_config.provider)  # Type-safe, IDE autocomplete
 ```
+
+**Преимущества:**
+- Fail-fast: ошибки обнаруживаются при запуске
+- Type Safety: полная типизация, автокомплит в IDE
+- Валидация: автоматическая проверка типов, диапазонов, форматов
+- Документация: схемы служат документацией
 
 ### 3. Промпты и шаблонизация
 
