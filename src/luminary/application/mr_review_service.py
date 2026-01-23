@@ -16,6 +16,14 @@ logger = logging.getLogger(__name__)
 class MRReviewService:
     """Service for reviewing entire merge requests"""
 
+    llm_provider: LLMProvider
+    gitlab_client: GitLabClient
+    file_filter: FileFilter
+    review_service: ReviewService
+    max_files: Optional[int]
+    max_lines: Optional[int]
+    comment_mode: str
+
     def __init__(
         self,
         llm_provider: LLMProvider,

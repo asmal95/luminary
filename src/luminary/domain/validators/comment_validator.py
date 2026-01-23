@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from luminary.domain.models.comment import Comment
 from luminary.domain.models.file_change import FileChange
@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 
 class ValidationResult:
     """Result of comment validation"""
+
+    valid: bool
+    reason: str
+    scores: Dict[str, float]
+    comment: Comment
 
     def __init__(
         self,
@@ -41,6 +46,11 @@ class CommentValidator:
     """Validator for code review comments using LLM"""
 
     DEFAULT_THRESHOLD = 0.7
+
+    llm_provider: LLMProvider
+    threshold: float
+    prompt_builder: ValidationPromptBuilder
+    stats: Dict[str, Any]
 
     def __init__(
         self,

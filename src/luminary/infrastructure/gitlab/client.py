@@ -23,6 +23,11 @@ logger = logging.getLogger(__name__)
 class GitLabClient:
     """Client for GitLab API operations"""
 
+    gitlab_url: str
+    private_token: Optional[str]
+    retry_config: RetryConfig
+    gl: Any  # gitlab.Gitlab instance
+
     def __init__(
         self,
         gitlab_url: Optional[str] = None,

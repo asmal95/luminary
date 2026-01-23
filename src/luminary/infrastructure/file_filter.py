@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 class FileFilter:
     """Filter for files based on patterns and binary detection"""
 
+    ignore_patterns: List[str]
+
     def __init__(
         self,
         ignore_patterns: List[str] = None,

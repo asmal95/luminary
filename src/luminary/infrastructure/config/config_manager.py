@@ -39,6 +39,9 @@ class ConfigManager:
     4. CLI arguments (handled by CLI layer)
     """
 
+    config_path: Optional[Path]
+    config: AppConfig
+
     def __init__(self, config_path: Optional[Path] = None):
         """Initialize config manager
 

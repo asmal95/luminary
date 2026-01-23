@@ -20,6 +20,15 @@ logger = logging.getLogger(__name__)
 class ReviewService:
     """Service for reviewing code changes"""
 
+    llm_provider: LLMProvider
+    validator: Optional[CommentValidator]
+    prompt_builder: ReviewPromptBuilder
+    comment_mode: str
+    max_context_tokens: Optional[int]
+    chunk_overlap_lines: int
+    language: Optional[str]
+    framework: Optional[str]
+
     def __init__(
         self,
         llm_provider: LLMProvider,
