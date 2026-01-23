@@ -87,14 +87,43 @@
 
 **Результат:** Все тесты проходят, код работает с реальной конфигурацией.
 
+### 7. ✅ Удалена бесполезная настройка `ignore.binary_files`
+
+**Проблема:** Настройка `ignore.binary_files` позволяла отключить игнорирование бинарных файлов, но это бессмысленно - LLM не может анализировать бинарные данные.
+
+**Решение:** 
+- Удалена настройка `binary_files` из `IgnoreConfig`
+- Удалён параметр `ignore_binary` из `FileFilter`
+- Бинарные файлы теперь **всегда** игнорируются автоматически
+- Упрощён метод `should_ignore()` - убрана проверка `self.ignore_binary`
+- Удалён метод `should_ignore_binary_files()` из `ConfigManager`
+- Обновлены все примеры конфигов и документация
+
+**Изменённые файлы:**
+- `src/luminary/domain/config/ignore.py` - удалено поле `binary_files`
+- `src/luminary/domain/config/app.py` - убрано из примера
+- `src/luminary/infrastructure/file_filter.py` - удалён параметр, упрощена логика
+- `src/luminary/infrastructure/config/config_manager.py` - удалён метод
+- `src/luminary/cli.py` - убрана передача `ignore_binary`
+- `examples/*.yml` - удалено `binary_files: true` из всех конфигов
+- `tests/test_cli.py` - обновлены моки
+- `tests/test_config_validation.py` - удалены тесты для `binary_files`
+- `AGENTS.md` - обновлена документация
+- `docs/ADR/0007-configuration-management.md` - обновлён пример
+
+**Результат:** 
+- Убрано ~15 строк кода
+- Удалена бесполезная настройка
+- Проще конфигурация - меньше параметров для пользователя
+
 ---
 
 ## Статистика
 
-- **Удалено строк кода:** ~150
-- **Упрощено методов:** 1 (comment_validator)
+- **Удалено строк кода:** ~165
+- **Упрощено методов:** 2 (comment_validator, file_filter)
 - **Устранено дублирований:** 2 (DEFAULT_CONFIG, provider_config)
-- **Удалено неиспользуемых настроек:** 2 (severity_levels, markdown)
+- **Удалено неиспользуемых настроек:** 3 (severity_levels, markdown, binary_files)
 - **Исправлено багов:** 1 (Pydantic модели вместо словарей)
 - **Обновлено тестов:** Все моки используют Pydantic модели
 - **Все тесты:** ✅ Прошли (134/134)

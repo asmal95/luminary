@@ -259,7 +259,7 @@ class TestMRCommand:
         mock_config = MagicMock()
         mock_config.get_llm_config.return_value = LLMConfig(provider="mock")
         mock_config.get_validator_config.return_value = ValidatorConfig(enabled=False)
-        mock_config.get_ignore_config.return_value = IgnoreConfig(patterns=[], binary_files=True)
+        mock_config.get_ignore_config.return_value = IgnoreConfig(patterns=[])
         mock_config.get_comments_config.return_value = CommentsConfig(mode="both")
         mock_config.get_limits_config.return_value = LimitsConfig()
         mock_config.get_prompts_config.return_value = PromptsConfig()

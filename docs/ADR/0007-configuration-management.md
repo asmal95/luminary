@@ -43,7 +43,6 @@ ignore:
     - "*.min.js"
     - "package-lock.json"
     - "yarn.lock"
-  binary_files: true
 
 # Лимиты
 limits:
@@ -54,8 +53,6 @@ limits:
 # Комментарии
 comments:
   mode: both  # inline, summary, both
-  severity_levels: true  # info, warning, error
-  markdown: true
 
 # Retry стратегия
 retry:

@@ -10,7 +10,6 @@ class IgnoreConfig(BaseModel):
 
     Attributes:
         patterns: Glob patterns to ignore
-        binary_files: Whether to ignore binary files
     """
 
     patterns: List[str] = Field(
@@ -23,4 +22,3 @@ class IgnoreConfig(BaseModel):
             ".git/**",
         ]
     )
-    binary_files: bool = True

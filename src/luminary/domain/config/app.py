@@ -63,7 +63,6 @@ class AppConfig(BaseModel):
                 },
                 "ignore": {
                     "patterns": ["*.lock", "*.min.js", "target/**"],
-                    "binary_files": True,
                 },
                 "limits": {
                     "max_files": 50,

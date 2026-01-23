@@ -32,7 +32,6 @@ ignore:
     - "*.iml"
     - ".mvn/**"
     - "*.lock"
-  binary_files: true
 
 # Лимиты для больших проектов
 limits:

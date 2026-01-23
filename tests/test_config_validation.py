@@ -158,11 +158,7 @@ class TestCommentsConfigValidation:
 
     def test_valid_comments_config(self):
         """Test valid comments configuration"""
-        config = CommentsConfig(
-            mode="both",
-            severity_levels=True,
-            markdown=True,
-        )
+        config = CommentsConfig(mode="both")
         assert config.mode == "both"
 
     def test_invalid_mode(self):
@@ -268,13 +264,8 @@ class TestIgnoreConfig:
         """Test default ignore patterns are set"""
         config = IgnoreConfig()
         assert "*.lock" in config.patterns
-        assert config.binary_files is True
 
     def test_custom_patterns(self):
         """Test custom patterns"""
-        config = IgnoreConfig(
-            patterns=["*.test", "target/**"],
-            binary_files=False,
-        )
+        config = IgnoreConfig(patterns=["*.test", "target/**"])
         assert "*.test" in config.patterns
-        assert config.binary_files is False

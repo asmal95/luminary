@@ -16,16 +16,13 @@ class FileFilter:
     def __init__(
         self,
         ignore_patterns: List[str] = None,
-        ignore_binary: bool = True,
     ):
         """Initialize file filter
 
         Args:
             ignore_patterns: List of glob patterns to ignore
-            ignore_binary: Whether to ignore binary files
         """
         self.ignore_patterns = ignore_patterns or []
-        self.ignore_binary = ignore_binary
 
     def should_ignore(self, file_change: FileChange) -> tuple[bool, str]:
         """Check if file should be ignored
@@ -38,8 +35,8 @@ class FileFilter:
         """
         file_path = file_change.path
 
-        # Check binary files
-        if self.ignore_binary and file_change.is_binary:
+        # Always ignore binary files (they can't be analyzed by LLM)
+        if file_change.is_binary:
             return True, "binary file"
 
         # Check patterns

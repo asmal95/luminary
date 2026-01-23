@@ -363,7 +363,6 @@ def mr(
         ignore_config = config_manager.get_ignore_config()
         file_filter = FileFilter(
             ignore_patterns=ignore_config.patterns,
-            ignore_binary=ignore_config.binary_files,
         )
 
         # Create MR review service

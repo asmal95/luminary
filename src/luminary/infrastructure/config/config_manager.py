@@ -163,14 +163,6 @@ class ConfigManager:
         """
         return self.config.ignore.patterns
 
-    def should_ignore_binary_files(self) -> bool:
-        """Check if binary files should be ignored
-
-        Returns:
-            True if binary files should be ignored
-        """
-        return self.config.ignore.binary_files
-
     def get_retry_config(self) -> RetryConfig:
         """Get retry configuration
 

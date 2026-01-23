@@ -29,7 +29,6 @@ ignore:
     - "*.map"
     - "node_modules/**"
     - ".git/**"
-  binary_files: true
 
 # Limits
 limits:

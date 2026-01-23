@@ -189,7 +189,7 @@ Create `.ai-reviewer.yml` in project root. See `examples/ai-reviewer-config-java
 - `comments` - Comment mode (inline/summary/both)
 - `limits` - Processing limits (max_files, max_lines, max_context_tokens, chunk_overlap_size)
 - `retry` - Retry strategy (max_attempts, backoff_multiplier, initial_delay, jitter)
-- `ignore` - File filtering patterns (patterns list, binary_files boolean)
+- `ignore` - File filtering patterns (patterns list)
 - `prompts` - Custom prompt templates (review, validation)
 - `gitlab` - GitLab settings (url, token)
 
@@ -284,7 +284,7 @@ The project includes `.gitlab-ci.yml` with three stages:
 - Returns predefined responses
 
 ### File Filtering
-- Binary files are automatically filtered (configurable via `ignore.binary_files`)
+- Binary files are always automatically ignored (can't be analyzed by LLM)
 - Patterns in `ignore.patterns` are filtered using glob matching
 - Default patterns: `*.lock`, `*.min.js`, `*.min.css`, `*.map`, `node_modules/**`, `.git/**`
 
