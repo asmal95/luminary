@@ -23,6 +23,7 @@ class Comment:
     severity: Severity = Severity.INFO  # Severity level
     file_path: Optional[str] = None  # File path this comment refers to
     suggestion: Optional[str] = None  # Suggested replacement code (optional)
+    line_type: str = "new"  # Line type: "new", "old", or "unchanged"
 
     def __post_init__(self):
         """Validate comment data"""

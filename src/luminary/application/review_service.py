@@ -80,7 +80,7 @@ class ReviewService:
             comments: List[Comment] = []
             summaries: List[str] = []
             for response in responses:
-                comments.extend(self._parse_llm_response(response, file_change.path))
+                comments.extend(self._parse_llm_response(response, file_change))
                 summary = self._extract_summary(response)
                 if summary:
                     summaries.append(summary)
@@ -273,12 +273,12 @@ class ReviewService:
                     pass
         return None
 
-    def _parse_comment_item(self, item: Dict[str, Any], file_path: str) -> Optional[Comment]:
+    def _parse_comment_item(self, item: Dict[str, Any], file_change: FileChange) -> Optional[Comment]:
         """Parse a single comment item from JSON
 
         Args:
             item: Comment item dictionary
-            file_path: Expected file path
+            file_change: File change being reviewed
 
         Returns:
             Comment object or None if invalid
@@ -314,12 +314,16 @@ class ReviewService:
         # Determine severity from message keywords
         severity = self._infer_severity(comment_message)
 
+        # Determine line type (new/old/unchanged)
+        line_type = file_change.get_line_type(line_number)
+
         return Comment(
             content=comment_message,
             line_number=line_number,
-            file_path=file_path,
+            file_path=file_change.path,
             severity=severity,
             suggestion=comment_suggestion if comment_suggestion else None,
+            line_type=line_type,
         )
 
     def _infer_severity(self, message: str) -> Severity:
@@ -338,16 +342,17 @@ class ReviewService:
             return Severity.WARNING
         return Severity.INFO
 
-    def _parse_llm_response(self, response: str, file_path: str) -> List[Comment]:
+    def _parse_llm_response(self, response: str, file_change: FileChange) -> List[Comment]:
         """Parse LLM response into Comment objects
 
         Args:
             response: LLM response text (should be JSON)
-            file_path: Path to the file being reviewed
+            file_change: File change being reviewed
 
         Returns:
             List of Comment objects
         """
+        file_path = file_change.path
         logger.debug(f"Parsing LLM response for {file_path} " f"(length: {len(response)} chars)")
 
         try:
@@ -373,7 +378,7 @@ class ReviewService:
             # Parse comments
             comments = []
             for item in comments_array:
-                comment = self._parse_comment_item(item, file_path)
+                comment = self._parse_comment_item(item, file_change)
                 if comment:
                     comments.append(comment)
 

@@ -916,8 +916,8 @@ class TestPostComment:
             assert result is True
             mock_discussions.create.assert_called_once()
 
-    def test_post_inline_comment_no_line_code_returns_false(self):
-        """Test that posting inline comment without line_code returns False"""
+    def test_post_inline_comment_no_line_code_attempts_without_it(self):
+        """Test that posting inline comment without line_code attempts to post without it"""
         with patch("luminary.infrastructure.gitlab.client.gitlab.Gitlab") as mock_gitlab_class:
             mock_gl = MagicMock()
             mock_gitlab_class.return_value = mock_gl
@@ -925,15 +925,23 @@ class TestPostComment:
             mock_project = MagicMock()
             mock_gl.projects.get.return_value = mock_project
 
-            # Make file fetch fail
+            # Make file fetch fail (so line_code cannot be calculated)
             error = GitlabError("404 Not Found")
             error.response_code = 404
             mock_project.files.get.side_effect = error
 
             mock_mr = MagicMock()
             mock_mr.source_branch = "feature-branch"
-            mock_mr.diff_refs = {"head_sha": "abc123"}
+            mock_mr.diff_refs = {
+                "base_sha": "base123",
+                "start_sha": "start123",
+                "head_sha": "abc123",
+            }
             mock_project.mergerequests.get.return_value = mock_mr
+
+            # Mock successful discussion creation
+            mock_discussion = MagicMock()
+            mock_mr.discussions.create.return_value = mock_discussion
 
             client = GitLabClient(private_token="test-token")
 
@@ -945,7 +953,10 @@ class TestPostComment:
                 file_path="test.py",
             )
 
-            assert result is False
+            # Should succeed even without line_code
+            assert result is True
+            # Should have attempted to create discussion
+            mock_mr.discussions.create.assert_called_once()
 
     def test_post_inline_comment_falls_back_to_general_on_line_code_error(self):
         """Test that inline comment falls back to general comment on line_code error"""

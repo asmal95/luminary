@@ -265,7 +265,8 @@ class TestParseLLMResponse:
             ]
         )
 
-        comments = service._parse_llm_response(response, "test.py")
+        file_change = FileChange(path="test.py", new_content="line1\nline2\n")
+        comments = service._parse_llm_response(response, file_change)
 
         assert len(comments) == 2
         assert comments[0].line_number == 1
@@ -285,7 +286,8 @@ class TestParseLLMResponse:
             }
         )
 
-        comments = service._parse_llm_response(response, "test.py")
+        file_change = FileChange(path="test.py", new_content="line1\n")
+        comments = service._parse_llm_response(response, file_change)
 
         assert len(comments) == 1
         assert comments[0].line_number == 1
@@ -301,7 +303,8 @@ class TestParseLLMResponse:
             + "\n```"
         )
 
-        comments = service._parse_llm_response(response, "test.py")
+        file_change = FileChange(path="test.py", new_content="line1\n")
+        comments = service._parse_llm_response(response, file_change)
 
         assert len(comments) == 1
 
@@ -313,7 +316,8 @@ class TestParseLLMResponse:
         # JSON with trailing comma (should be fixed)
         response = '[{"file": "test.py", "line": 1, "message": "Comment", "suggestion": null,}]'
 
-        comments = service._parse_llm_response(response, "test.py")
+        file_change = FileChange(path="test.py", new_content="line1\n")
+        comments = service._parse_llm_response(response, file_change)
 
         assert len(comments) == 1
 
@@ -330,7 +334,8 @@ class TestParseLLMResponse:
             ]
         )
 
-        comments = service._parse_llm_response(response, "test.py")
+        file_change = FileChange(path="test.py", new_content="line1\n")
+        comments = service._parse_llm_response(response, file_change)
 
         # Should skip invalid line numbers
         assert len(comments) == 1
@@ -349,7 +354,8 @@ class TestParseLLMResponse:
             ]
         )
 
-        comments = service._parse_llm_response(response, "test.py")
+        file_change = FileChange(path="test.py", new_content="line1\nline2\nline3\n")
+        comments = service._parse_llm_response(response, file_change)
 
         assert comments[0].severity == Severity.ERROR
         assert comments[1].severity == Severity.WARNING
@@ -362,7 +368,8 @@ class TestParseLLMResponse:
 
         response = "This is not valid JSON"
 
-        comments = service._parse_llm_response(response, "test.py")
+        file_change = FileChange(path="test.py", new_content="line1\n")
+        comments = service._parse_llm_response(response, file_change)
 
         assert len(comments) == 1
         assert (

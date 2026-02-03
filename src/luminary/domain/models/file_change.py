@@ -49,3 +49,40 @@ class FileChange:
     def total_lines_changed(self) -> int:
         """Calculate total number of lines changed"""
         return sum(hunk.old_count + hunk.new_count for hunk in self.hunks if self.hunks)
+
+    def get_line_type(self, line_number: int) -> str:
+        """Determine line type (new/old/unchanged) for a given line number
+
+        Args:
+            line_number: Line number in the new file (1-based)
+
+        Returns:
+            Line type: "new", "old", or "unchanged"
+        """
+        if not self.hunks:
+            # No hunks means unchanged file or full content
+            return "unchanged"
+
+        # Track current line numbers in both old and new files
+        for hunk in self.hunks:
+            new_line = hunk.new_start
+            old_line = hunk.old_start
+
+            for line in hunk.lines:
+                if line.startswith("+"):
+                    # Added line
+                    if new_line == line_number:
+                        return "new"
+                    new_line += 1
+                elif line.startswith("-"):
+                    # Deleted line (references old file)
+                    old_line += 1
+                else:
+                    # Unchanged line (context line)
+                    if new_line == line_number:
+                        return "unchanged"
+                    new_line += 1
+                    old_line += 1
+
+        # Line is outside hunks - unchanged context
+        return "unchanged"

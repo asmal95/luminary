@@ -208,6 +208,7 @@ class MRReviewService:
                     body=comment.to_markdown(),
                     line_number=comment.line_number,
                     file_path=comment.file_path or result.file_change.path,
+                    line_type=comment.line_type,
                     file_content=file_content,
                 )
                 if success:

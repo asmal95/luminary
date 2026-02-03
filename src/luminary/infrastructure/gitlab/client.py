@@ -609,13 +609,13 @@ class GitLabClient:
             line_code = self._calculate_line_code(project_id, file_path, line_number, mr)
 
         if not line_code or not line_code.strip():
-            logger.warning(
+            logger.debug(
                 f"Could not calculate line_code for {file_path}:{line_number}. "
                 f"file_content provided: {file_content is not None}, "
                 f"file_content length: {len(file_content) if file_content else 0}. "
-                "Skipping inline comment (GitLab requires line_code)."
+                f"Will attempt to post comment without line_code (line_type: {line_type})."
             )
-            return False
+            line_code = None
 
         # Build position dict
         position = {
@@ -625,13 +625,28 @@ class GitLabClient:
             "old_path": file_path,
             "new_path": file_path,
             "position_type": "text",
-            "new_line": line_number if line_type == "new" else None,
-            "old_line": line_number if line_type == "old" else None,
-            "line_code": line_code,
         }
 
+        # Set line numbers based on line type
+        if line_type == "unchanged":
+            # For unchanged lines, both old_line and new_line should be set
+            position["new_line"] = line_number
+            position["old_line"] = line_number
+        elif line_type == "new":
+            position["new_line"] = line_number
+            position["old_line"] = None
+        elif line_type == "old":
+            position["new_line"] = None
+            position["old_line"] = line_number
+
+        # Only include line_code if it's available
+        # According to GitLab API docs, line_code is optional
+        if line_code and line_code.strip():
+            position["line_code"] = line_code
+
+        line_code_info = f"length: {len(line_code)}" if line_code else "None"
         logger.debug(
-            f"Posting inline comment to {file_path}:{line_number} with line_code length: {len(line_code)}"
+            f"Posting inline comment to {file_path}:{line_number} with line_code {line_code_info}"
         )
 
         try:
