@@ -30,6 +30,7 @@ class ReviewService:
     chunk_overlap_lines: int
     language: Optional[str]
     framework: Optional[str]
+    context_retriever: Optional[Any]
 
     def __init__(
         self,
@@ -41,6 +42,7 @@ class ReviewService:
         chunk_overlap_lines: int = 200,
         language: Optional[str] = None,
         framework: Optional[str] = None,
+        context_retriever: Optional[Any] = None,
     ):
         """Initialize review service
 
@@ -53,6 +55,7 @@ class ReviewService:
             chunk_overlap_lines: Number of lines to overlap between chunks
             language: Explicit language (overrides auto-detection)
             framework: Framework name (e.g., "Django", "React")
+            context_retriever: Optional context retriever integration
         """
         self.llm_provider = llm_provider
         self.validator = validator
@@ -62,6 +65,7 @@ class ReviewService:
         self.chunk_overlap_lines = chunk_overlap_lines
         self.language = language
         self.framework = framework
+        self.context_retriever = context_retriever
 
     def review_file(self, file_change: FileChange) -> ReviewResult:
         """Review a single file change
@@ -123,6 +127,7 @@ class ReviewService:
             List of LLM response strings
         """
         responses: List[str] = []
+        retrieved_context = self._get_retrieved_context(file_change)
 
         if self._should_chunk(file_change):
             for chunk_fc, chunk_range in self._iter_file_chunks(file_change):
@@ -131,6 +136,7 @@ class ReviewService:
                     language=language,
                     framework=self.framework,
                     line_number_offset=chunk_range[0] - 1,
+                    retrieved_context=retrieved_context,
                 )
                 logger.debug(
                     f"Calling LLM for file chunk {file_change.path} "
@@ -144,12 +150,42 @@ class ReviewService:
                 language=language,
                 framework=self.framework,
                 line_number_offset=0,
+                retrieved_context=retrieved_context,
             )
             prompt = self.prompt_builder.build(file_change, options=options)
             logger.debug(f"Calling LLM for file: {file_change.path}")
             responses.append(self.llm_provider.generate(prompt))
 
         return responses
+
+    def _get_retrieved_context(self, file_change: FileChange) -> Optional[str]:
+        """Retrieve optional project context from external index service."""
+        if not self.context_retriever:
+            return None
+
+        try:
+            context = self.context_retriever.retrieve_for_file_change(file_change)
+            if context:
+                logger.debug(
+                    "Retrieved external context for %s (%d chars)",
+                    file_change.path,
+                    len(context),
+                )
+            return context
+        except Exception as e:
+            fail_open = True
+            retriever_config = getattr(self.context_retriever, "config", None)
+            if retriever_config is not None:
+                fail_open = getattr(retriever_config, "fail_open", True)
+
+            if fail_open:
+                logger.warning(
+                    "Code Context retrieval failed for %s, continuing without it: %s",
+                    file_change.path,
+                    e,
+                )
+                return None
+            raise
 
     def _apply_comment_mode(
         self, comments: List[Comment], summary: Optional[str]

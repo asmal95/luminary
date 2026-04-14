@@ -11,6 +11,7 @@ import pytest
 from click.testing import CliRunner
 
 from luminary.cli import _die, cli, main, parse_file_or_diff, setup_logging
+from luminary.domain.config.code_context import CodeContextConfig
 from luminary.domain.config.comments import CommentsConfig
 from luminary.domain.config.ignore import IgnoreConfig
 from luminary.domain.config.limits import LimitsConfig
@@ -124,6 +125,7 @@ class TestFileCommand:
         mock_config.get_limits_config.return_value = LimitsConfig()
         mock_config.get_prompts_config.return_value = PromptsConfig()
         mock_config.get_retry_config.return_value = RetryConfig()
+        mock_config.get_code_context_config.return_value = CodeContextConfig(enabled=False)
         mock_config_manager.return_value = mock_config
 
         mock_provider = MagicMock()
@@ -165,6 +167,7 @@ class TestFileCommand:
         mock_config.get_limits_config.return_value = LimitsConfig()
         mock_config.get_prompts_config.return_value = PromptsConfig()
         mock_config.get_retry_config.return_value = RetryConfig()
+        mock_config.get_code_context_config.return_value = CodeContextConfig(enabled=False)
         mock_config_manager.return_value = mock_config
 
         mock_factory.create.side_effect = ValueError("Invalid provider")
@@ -204,6 +207,7 @@ class TestFileCommand:
         mock_config.get_limits_config.return_value = LimitsConfig()
         mock_config.get_prompts_config.return_value = PromptsConfig()
         mock_config.get_retry_config.return_value = RetryConfig()
+        mock_config.get_code_context_config.return_value = CodeContextConfig(enabled=False)
         mock_config_manager.return_value = mock_config
 
         mock_provider = MagicMock()
@@ -264,6 +268,7 @@ class TestMRCommand:
         mock_config.get_limits_config.return_value = LimitsConfig()
         mock_config.get_prompts_config.return_value = PromptsConfig()
         mock_config.get_retry_config.return_value = RetryConfig(max_attempts=3, initial_delay=1.0)
+        mock_config.get_code_context_config.return_value = CodeContextConfig(enabled=False)
         mock_config_manager.return_value = mock_config
 
         mock_provider = MagicMock()
@@ -329,6 +334,7 @@ class TestMRCommand:
         mock_config.get_limits_config.return_value = LimitsConfig()
         mock_config.get_prompts_config.return_value = PromptsConfig()
         mock_config.get_retry_config.return_value = RetryConfig()
+        mock_config.get_code_context_config.return_value = CodeContextConfig(enabled=False)
         mock_config_manager.return_value = mock_config
 
         mock_factory.create.side_effect = ValueError("Invalid provider")
@@ -354,6 +360,7 @@ class TestMRCommand:
         mock_config.get_limits_config.return_value = LimitsConfig()
         mock_config.get_prompts_config.return_value = PromptsConfig()
         mock_config.get_retry_config.return_value = RetryConfig()
+        mock_config.get_code_context_config.return_value = CodeContextConfig(enabled=False)
         mock_config_manager.return_value = mock_config
 
         mock_provider = MagicMock()
@@ -391,6 +398,7 @@ class TestMRCommand:
         mock_config.get_limits_config.return_value = LimitsConfig()
         mock_config.get_prompts_config.return_value = PromptsConfig()
         mock_config.get_retry_config.return_value = RetryConfig()
+        mock_config.get_code_context_config.return_value = CodeContextConfig(enabled=False)
         mock_config_manager.return_value = mock_config
 
         mock_provider = MagicMock()

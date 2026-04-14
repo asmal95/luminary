@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from luminary.domain.config.code_context import CodeContextConfig
 from luminary.domain.config.comments import CommentsConfig
 from luminary.domain.config.gitlab import GitLabConfig
 from luminary.domain.config.ignore import IgnoreConfig
@@ -25,6 +26,7 @@ class AppConfig(BaseModel):
         ignore: File filtering configuration
         limits: Processing limits configuration
         comments: Comment generation configuration
+        code_context: Optional retrieval integration configuration
         prompts: Custom prompts configuration
         retry: Retry logic configuration
     """
@@ -35,6 +37,7 @@ class AppConfig(BaseModel):
     ignore: IgnoreConfig = Field(default_factory=IgnoreConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     comments: CommentsConfig = Field(default_factory=CommentsConfig)
+    code_context: CodeContextConfig = Field(default_factory=CodeContextConfig)
     prompts: PromptsConfig = Field(default_factory=PromptsConfig)
     retry: RetryConfig = Field(default_factory=RetryConfig)
 
@@ -73,6 +76,20 @@ class AppConfig(BaseModel):
                 },
                 "comments": {
                     "mode": "both",
+                },
+                "code_context": {
+                    "enabled": False,
+                    "base_url": "http://localhost:8000",
+                    "timeout": 10.0,
+                    "repo_name": None,
+                    "branch": None,
+                    "max_queries": 3,
+                    "search_limit": 6,
+                    "max_hits_per_query": 3,
+                    "neighbors_depth": 2,
+                    "max_neighbors": 5,
+                    "max_context_chars": 20000,
+                    "fail_open": True,
                 },
                 "prompts": {
                     "review": None,

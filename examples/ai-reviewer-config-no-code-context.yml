@@ -1,0 +1,47 @@
+# Preset: Luminary without Code Context integration.
+# Use this config as baseline when you want classic review flow only.
+
+llm:
+  provider: openrouter
+  model: anthropic/claude-3.5-sonnet
+  temperature: 0.7
+  max_tokens: 2000
+  top_p: 0.9
+
+validator:
+  enabled: true
+  provider: openrouter
+  model: anthropic/claude-3-haiku
+  threshold: 0.7
+
+gitlab:
+  url: null
+  token: null
+
+ignore:
+  patterns:
+    - "*.lock"
+    - "*.min.js"
+    - "*.min.css"
+    - "*.map"
+    - "node_modules/**"
+    - ".git/**"
+
+limits:
+  max_files: 50
+  max_lines: 10000
+  max_context_tokens: 8000
+  chunk_overlap_size: 200
+  max_concurrent_files: 1
+
+comments:
+  mode: both
+
+retry:
+  max_attempts: 3
+  initial_delay: 1
+  backoff_multiplier: 2
+  jitter: 0.1
+
+code_context:
+  enabled: false

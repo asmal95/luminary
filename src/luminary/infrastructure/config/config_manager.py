@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from luminary.domain.config import (
     AppConfig,
+    CodeContextConfig,
     CommentsConfig,
     GitLabConfig,
     IgnoreConfig,
@@ -197,6 +198,14 @@ class ConfigManager:
             Prompts configuration model
         """
         return self.config.prompts
+
+    def get_code_context_config(self) -> CodeContextConfig:
+        """Get Code Context integration configuration.
+
+        Returns:
+            Code Context configuration model
+        """
+        return self.config.code_context
 
     def get_gitlab_config(self) -> GitLabConfig:
         """Get GitLab configuration

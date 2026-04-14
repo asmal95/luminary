@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from luminary.domain.config import (
     AppConfig,
+    CodeContextConfig,
     CommentsConfig,
     GitLabConfig,
     IgnoreConfig,
@@ -251,6 +252,7 @@ class TestConfigManagerValidation:
         assert isinstance(manager.get_ignore_config(), IgnoreConfig)
         assert isinstance(manager.get_limits_config(), LimitsConfig)
         assert isinstance(manager.get_comments_config(), CommentsConfig)
+        assert isinstance(manager.get_code_context_config(), CodeContextConfig)
         assert isinstance(manager.get_prompts_config(), PromptsConfig)
         assert isinstance(manager.get_retry_config(), RetryConfig)
 

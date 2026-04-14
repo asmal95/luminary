@@ -1,6 +1,7 @@
 """Configuration models with Pydantic validation."""
 
 from luminary.domain.config.app import AppConfig
+from luminary.domain.config.code_context import CodeContextConfig
 from luminary.domain.config.comments import CommentsConfig
 from luminary.domain.config.gitlab import GitLabConfig
 from luminary.domain.config.ignore import IgnoreConfig
@@ -18,6 +19,7 @@ __all__ = [
     "IgnoreConfig",
     "LimitsConfig",
     "CommentsConfig",
+    "CodeContextConfig",
     "PromptsConfig",
     "RetryConfig",
 ]

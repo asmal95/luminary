@@ -11,6 +11,7 @@ from luminary.application.mr_review_service import MRReviewService
 from luminary.application.review_service import ReviewService
 from luminary.domain.models.file_change import FileChange
 from luminary.domain.validators.comment_validator import CommentValidator
+from luminary.infrastructure.code_context import CodeContextClient, CodeContextRetriever
 from luminary.infrastructure.config.config_manager import ConfigManager
 from luminary.infrastructure.diff_parser import parse_file_content, parse_unified_diff
 from luminary.infrastructure.file_filter import FileFilter
@@ -171,6 +172,7 @@ def _create_review_service(
     llm_provider: any,
     validator: Optional[CommentValidator],
     comments_mode_override: Optional[str],
+    context_retriever: Optional[CodeContextRetriever] = None,
 ) -> ReviewService:
     """Create review service
 
@@ -195,7 +197,19 @@ def _create_review_service(
         comment_mode=mode,
         max_context_tokens=limits_config.max_context_tokens,
         chunk_overlap_lines=limits_config.chunk_overlap_size,
+        context_retriever=context_retriever,
     )
+
+
+def _create_context_retriever(config_manager: ConfigManager) -> Optional[CodeContextRetriever]:
+    """Create Code Context retriever if integration is enabled."""
+    cc_config = config_manager.get_code_context_config()
+    if not cc_config.enabled:
+        return None
+
+    client = CodeContextClient(base_url=cc_config.base_url, timeout=cc_config.timeout)
+    logger.info("Code Context retrieval enabled")
+    return CodeContextRetriever(client=client, config=cc_config)
 
 
 def _output_file_review_results(result: any, validator: Optional[CommentValidator]) -> None:
@@ -275,8 +289,9 @@ def file(ctx, file_path: Path, provider: str, comments_mode: str, no_validate: b
         validator = _create_validator(
             config_manager, llm_provider, provider_config, no_validate, verbose
         )
+        context_retriever = _create_context_retriever(config_manager)
         review_service = _create_review_service(
-            config_manager, llm_provider, validator, comments_mode
+            config_manager, llm_provider, validator, comments_mode, context_retriever
         )
 
         file_change = parse_file_or_diff(file_path)
@@ -341,8 +356,9 @@ def mr(
         validator = _create_validator(
             config_manager, llm_provider, provider_config, no_validate, verbose_mode
         )
+        context_retriever = _create_context_retriever(config_manager)
         review_service = _create_review_service(
-            config_manager, llm_provider, validator, comments_mode
+            config_manager, llm_provider, validator, comments_mode, context_retriever
         )
 
         # Create GitLab client

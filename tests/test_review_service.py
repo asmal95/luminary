@@ -26,6 +26,22 @@ class MockLLMProvider(LLMProvider):
         return self.response
 
 
+class MockContextRetriever:
+    """Mock retrieval adapter for testing prompt enrichment."""
+
+    def __init__(self, context: str = "", should_raise: bool = False, fail_open: bool = True):
+        self.context = context
+        self.should_raise = should_raise
+        self.calls = []
+        self.config = type("Cfg", (), {"fail_open": fail_open})()
+
+    def retrieve_for_file_change(self, file_change: FileChange) -> str:
+        self.calls.append(file_change.path)
+        if self.should_raise:
+            raise RuntimeError("retrieval failed")
+        return self.context
+
+
 class TestReviewServiceInit:
     """Tests for ReviewService initialization"""
 
@@ -145,6 +161,46 @@ class TestReviewFile:
         result = service.review_file(file_change)
 
         assert len(result.comments) == 0
+
+    def test_review_file_includes_retrieved_context_in_prompt(self):
+        """Test that retrieval context is included in LLM prompt."""
+        provider = MockLLMProvider('{"comments": []}')
+        retriever = MockContextRetriever(context="[hit] src/core.py :: function\nprocess_order")
+        service = ReviewService(provider, context_retriever=retriever)
+
+        file_change = FileChange(path="test.py", new_content="print('hello')\n")
+        result = service.review_file(file_change)
+
+        assert result.error is None
+        assert len(provider.calls) == 1
+        assert "Retrieved Project Context" in provider.calls[0]
+        assert "process_order" in provider.calls[0]
+        assert retriever.calls == ["test.py"]
+
+    def test_review_file_retrieval_fail_open_continues_review(self):
+        """Test retrieval errors are ignored when fail_open is enabled."""
+        provider = MockLLMProvider('{"comments": []}')
+        retriever = MockContextRetriever(should_raise=True, fail_open=True)
+        service = ReviewService(provider, context_retriever=retriever)
+
+        file_change = FileChange(path="test.py", new_content="print('hello')\n")
+        result = service.review_file(file_change)
+
+        assert result.error is None
+        assert len(provider.calls) == 1
+
+    def test_review_file_retrieval_fail_closed_returns_error(self):
+        """Test retrieval errors abort review when fail_open is disabled."""
+        provider = MockLLMProvider('{"comments": []}')
+        retriever = MockContextRetriever(should_raise=True, fail_open=False)
+        service = ReviewService(provider, context_retriever=retriever)
+
+        file_change = FileChange(path="test.py", new_content="print('hello')\n")
+        result = service.review_file(file_change)
+
+        assert result.error is not None
+        assert "retrieval failed" in result.error
+        assert len(provider.calls) == 0
 
 
 class TestCommentModes:

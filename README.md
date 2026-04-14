@@ -17,6 +17,7 @@
 - ✅ Гибкая конфигурация через `.ai-reviewer.yml`
 - ✅ Фильтрация бинарных и служебных файлов
 - ✅ Retry стратегия для устойчивости к ошибкам
+- ✅ Опциональное retrieval-обогащение через Code Context (REST)
 - ✅ Поддержка markdown в комментариях
 - ✅ Уровни severity (info, warning, error)
 
@@ -81,6 +82,20 @@ retry:
   max_attempts: 3
   initial_delay: 1
   backoff_multiplier: 2
+
+code_context:
+  enabled: false
+  base_url: http://localhost:8000
+  timeout: 10
+  repo_name: group/project
+  branch: main
+  max_queries: 3
+  search_limit: 6
+  max_hits_per_query: 3
+  neighbors_depth: 2
+  max_neighbors: 5
+  max_context_chars: 20000
+  fail_open: true
 
 prompts:
   review: |
@@ -168,6 +183,12 @@ luminary/
 - [Roadmap](ROADMAP.md) - детальный план разработки
 - [ADR документы](docs/ADR/) - архитектурные решения
 - [Быстрый старт](QUICK_START.md) - инструкции по установке и использованию
+- [План миграции на MCP](docs/MCP_MIGRATION_AGENT_PLAN.md) - future roadmap для агентного режима
+
+## 🧩 Пресеты конфигурации
+
+- `examples/ai-reviewer-config-no-code-context.yml` - базовый запуск без внешнего retrieval
+- `examples/ai-reviewer-config-code-context-rest.yml` - запуск с Code Context по REST
 
 ## 🛠️ Разработка
 

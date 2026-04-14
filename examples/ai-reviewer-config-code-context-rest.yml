@@ -1,0 +1,58 @@
+# Preset: Luminary with optional Code Context REST retrieval enabled.
+# Make sure Code Context server is running and index is built before use.
+
+llm:
+  provider: openrouter
+  model: anthropic/claude-3.5-sonnet
+  temperature: 0.7
+  max_tokens: 2000
+  top_p: 0.9
+
+validator:
+  enabled: true
+  provider: openrouter
+  model: anthropic/claude-3-haiku
+  threshold: 0.7
+
+gitlab:
+  url: null
+  token: null
+
+ignore:
+  patterns:
+    - "*.lock"
+    - "*.min.js"
+    - "*.min.css"
+    - "*.map"
+    - "node_modules/**"
+    - ".git/**"
+
+limits:
+  max_files: 50
+  max_lines: 10000
+  max_context_tokens: 8000
+  chunk_overlap_size: 200
+  max_concurrent_files: 1
+
+comments:
+  mode: both
+
+retry:
+  max_attempts: 3
+  initial_delay: 1
+  backoff_multiplier: 2
+  jitter: 0.1
+
+code_context:
+  enabled: true
+  base_url: http://localhost:8000
+  timeout: 10
+  repo_name: group/project
+  branch: main
+  max_queries: 3
+  search_limit: 6
+  max_hits_per_query: 3
+  neighbors_depth: 2
+  max_neighbors: 5
+  max_context_chars: 20000
+  fail_open: true

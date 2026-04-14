@@ -96,7 +96,18 @@ retry:
   max_attempts: 3
   initial_delay: 1
   backoff_multiplier: 2
+
+code_context:
+  enabled: false
+  base_url: http://localhost:8000
+  repo_name: group/project
+  branch: main
+  fail_open: true
 ```
+
+Или возьмите готовый пресет из `examples/`:
+- `ai-reviewer-config-no-code-context.yml` — без интеграции Code Context
+- `ai-reviewer-config-code-context-rest.yml` — с REST retrieval
 
 ## Проверка компонентов
 

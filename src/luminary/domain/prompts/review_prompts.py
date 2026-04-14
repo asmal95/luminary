@@ -16,6 +16,7 @@ class ReviewPromptOptions:
     language: Optional[str] = None
     framework: Optional[str] = None
     line_number_offset: int = 0  # used for chunking; absolute_line = offset + local_line
+    retrieved_context: Optional[str] = None
 
 
 class ReviewPromptBuilder:
@@ -96,6 +97,9 @@ Return ONLY JSON. Nothing else."""
             context_parts.append(f"Language: {options.language}")
         if options.framework:
             context_parts.append(f"Framework: {options.framework}")
+        if options.retrieved_context:
+            context_parts.append("\n### Retrieved Project Context:\n")
+            context_parts.append(options.retrieved_context)
 
         # Comment mode
         if options.comment_mode == "inline":
