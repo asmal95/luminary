@@ -5,9 +5,11 @@ import hashlib
 import logging
 import os
 import re
+import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import gitlab
+import requests
 from gitlab.exceptions import GitlabError
 
 from luminary.domain.models.file_change import FileChange, Hunk
@@ -90,7 +92,8 @@ class GitLabClient:
             RuntimeError: If MR cannot be retrieved
         """
         return self._retry_api_call(
-            lambda: self.gl.projects.get(project_id).mergerequests.get(merge_request_iid)
+            lambda: self.gl.projects.get(project_id).mergerequests.get(merge_request_iid),
+            operation="get_merge_request",
         )
 
     def get_merge_request_changes(
@@ -108,7 +111,7 @@ class GitLabClient:
         logger.info(f"Fetching changes for MR !{merge_request_iid} in {project_id}")
 
         mr = self.get_merge_request(project_id, merge_request_iid)
-        changes = self._retry_api_call(lambda: mr.changes())
+        changes = self._retry_api_call(lambda: mr.changes(), operation="get_merge_request_changes")
 
         file_changes = []
         for change in changes.get("changes", []):
@@ -611,11 +614,22 @@ class GitLabClient:
         if not line_code or not line_code.strip():
             logger.debug(
                 f"Could not calculate line_code for {file_path}:{line_number}. "
-                f"file_content provided: {file_content is not None}, "
-                f"file_content length: {len(file_content) if file_content else 0}. "
-                f"Will attempt to post comment without line_code (line_type: {line_type})."
+                f"Line is likely outside the MR diff (line_type: {line_type}). "
+                f"Posting as general comment instead."
             )
-            line_code = None
+            # GitLab requires line_code for inline comments, so post as general comment
+            try:
+                self._retry_api_call(
+                    lambda: mr.notes.create(
+                        {"body": f"**[Comment for {file_path}:{line_number}]**\n\n{body}"}
+                    ),
+                    operation="post_general_comment_fallback",
+                )
+                logger.debug(f"Posted as general comment for {file_path}:{line_number}")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to post as general comment: {e}")
+                return False
 
         # Build position dict
         position = {
@@ -639,20 +653,20 @@ class GitLabClient:
             position["new_line"] = None
             position["old_line"] = line_number
 
-        # Only include line_code if it's available
-        # According to GitLab API docs, line_code is optional
-        if line_code and line_code.strip():
-            position["line_code"] = line_code
+        # line_code is required by GitLab API for inline comments
+        position["line_code"] = line_code
 
-        line_code_info = f"length: {len(line_code)}" if line_code else "None"
         logger.debug(
-            f"Posting inline comment to {file_path}:{line_number} with line_code {line_code_info}"
+            f"Posting inline comment to {file_path}:{line_number} with line_code (length: {len(line_code)})"
         )
 
         try:
             # Create discussion with position
             discussion_data = {"body": body, "position": position}
-            self._retry_api_call(lambda: mr.discussions.create(discussion_data))
+            self._retry_api_call(
+                lambda: mr.discussions.create(discussion_data),
+                operation="post_inline_comment",
+            )
             logger.debug(f"Posted inline comment to {file_path}:{line_number}")
             return True
         except Exception as e:
@@ -669,7 +683,8 @@ class GitLabClient:
                     self._retry_api_call(
                         lambda: mr.notes.create(
                             {"body": f"*[Comment for {file_path}:{line_number}]*\n\n{body}"}
-                        )
+                        ),
+                        operation="post_general_comment_fallback",
                     )
                     logger.debug(f"Posted as general comment for {file_path}:{line_number}")
                     return True
@@ -712,7 +727,10 @@ class GitLabClient:
                 )
             else:
                 # General comment
-                self._retry_api_call(lambda: mr.notes.create({"body": body}))
+                self._retry_api_call(
+                    lambda: mr.notes.create({"body": body}),
+                    operation="post_general_comment",
+                )
                 logger.debug("Posted general comment to MR")
                 return True
 
@@ -720,7 +738,7 @@ class GitLabClient:
             logger.error(f"Failed to post comment: {e}", exc_info=True)
             return False
 
-    def _retry_api_call(self, func, *args, **kwargs):
+    def _retry_api_call(self, func, *args, operation: str = "gitlab_api_call", **kwargs):
         """Execute API call with retry logic
 
         Args:
@@ -735,20 +753,43 @@ class GitLabClient:
             RuntimeError: If all retries failed
         """
         from tenacity import (
-            before_sleep_log,
+            retry as tenacity_retry,
+        )
+        from tenacity import (
             retry_if_exception,
             stop_after_attempt,
             wait_exponential,
             wait_random,
         )
-        from tenacity import (
-            retry as tenacity_retry,
-        )
 
         def _retry_condition(exception: Exception) -> bool:
             if isinstance(exception, GitlabError):
                 return _should_retry_gitlab_error(exception)
-            return True  # Retry other exceptions
+            return isinstance(
+                exception,
+                (
+                    requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout,
+                    TimeoutError,
+                    ConnectionError,
+                ),
+            )
+
+        attempts = {"count": 0}
+
+        def _before_sleep(retry_state) -> None:
+            exc = retry_state.outcome.exception() if retry_state.outcome else None
+            status_code = getattr(exc, "response_code", None) if isinstance(exc, GitlabError) else None
+            logger.warning(
+                "Retrying GitLab API call",
+                extra={
+                    "component": "gitlab_client",
+                    "operation": operation,
+                    "attempt": retry_state.attempt_number,
+                    "max_attempts": self.retry_config.max_attempts,
+                    "status_code": status_code,
+                },
+            )
 
         # Настройка wait с jitter
         wait = wait_exponential(
@@ -766,14 +807,29 @@ class GitLabClient:
             wait=wait,
             retry=retry_if_exception(_retry_condition),
             reraise=True,
-            before_sleep=before_sleep_log(logger, logging.WARNING),
+            before_sleep=_before_sleep,
         )
         def _call_with_retry():
+            attempts["count"] += 1
             return func(*args, **kwargs)
 
         # Вызываем функцию с retry и обрабатываем неретрайящиеся ошибки
+        start_time = time.monotonic()
         try:
-            return _call_with_retry()
+            result = _call_with_retry()
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            logger.info(
+                "GitLab API call completed",
+                extra={
+                    "component": "gitlab_client",
+                    "operation": operation,
+                    "attempt": attempts["count"],
+                    "max_attempts": self.retry_config.max_attempts,
+                    "duration_ms": duration_ms,
+                    "retry_count": max(0, attempts["count"] - 1),
+                },
+            )
+            return result
         except GitlabError as e:
             # Эти ошибки не ретраятся (логика в _retry_condition)
             # Конвертируем в RuntimeError с понятными сообщениями

@@ -132,9 +132,11 @@ class TestLimitsConfigValidation:
             max_lines=10000,
             max_context_tokens=8000,
             chunk_overlap_size=200,
+            max_concurrent_files=4,
         )
         assert config.max_files == 50
         assert config.chunk_overlap_size == 200
+        assert config.max_concurrent_files == 4
 
     def test_max_files_zero(self):
         """Test max_files must be positive if set"""
@@ -151,6 +153,11 @@ class TestLimitsConfigValidation:
         config = LimitsConfig(max_files=None, max_lines=None, max_context_tokens=None)
         assert config.max_files is None
         assert config.max_lines is None
+
+    def test_max_concurrent_files_must_be_positive(self):
+        """Test max_concurrent_files must be >= 1"""
+        with pytest.raises(ValidationError, match="max_concurrent_files"):
+            LimitsConfig(max_concurrent_files=0)
 
 
 class TestCommentsConfigValidation:

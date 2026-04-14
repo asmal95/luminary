@@ -69,6 +69,7 @@ class AppConfig(BaseModel):
                     "max_lines": 10000,
                     "max_context_tokens": 8000,
                     "chunk_overlap_size": 200,
+                    "max_concurrent_files": 1,
                 },
                 "comments": {
                     "mode": "both",

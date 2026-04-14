@@ -377,6 +377,66 @@ class TestParseLLMResponse:
             or "[Parsing error" in comments[0].content
         )
 
+    def test_parse_json_with_text_preamble(self):
+        """Test parsing JSON when response has natural-language preamble"""
+        provider = MockLLMProvider()
+        service = ReviewService(provider)
+
+        payload = json.dumps(
+            {"comments": [{"file": "test.py", "line": 1, "message": "Preamble parse", "suggestion": None}]}
+        )
+        response = f"Here is the review output:\n{payload}"
+
+        file_change = FileChange(path="test.py", new_content="line1\n")
+        comments = service._parse_llm_response(response, file_change)
+
+        assert len(comments) == 1
+        assert comments[0].content == "Preamble parse"
+
+    def test_parse_json_prefers_fenced_block_when_multiple_payloads_exist(self):
+        """Test parsing prefers fenced JSON payload over surrounding noise"""
+        provider = MockLLMProvider()
+        service = ReviewService(provider)
+
+        response = (
+            "Noise before\n"
+            "```json\n"
+            '{"comments":[{"file":"test.py","line":1,"message":"from fenced","suggestion":null}]}\n'
+            "```\n"
+            "Trailing noise"
+        )
+
+        file_change = FileChange(path="test.py", new_content="line1\n")
+        comments = service._parse_llm_response(response, file_change)
+
+        assert len(comments) == 1
+        assert comments[0].content == "from fenced"
+
+    def test_parse_json_with_invalid_comments_shape_returns_fallback(self):
+        """Test parsing handles invalid comments schema safely"""
+        provider = MockLLMProvider()
+        service = ReviewService(provider)
+
+        response = json.dumps({"comments": "not-an-array", "summary": "invalid structure"})
+        file_change = FileChange(path="test.py", new_content="line1\n")
+        comments = service._parse_llm_response(response, file_change)
+
+        assert len(comments) == 1
+        assert "[Parsing error" in comments[0].content
+
+    def test_fallback_comment_truncates_long_response(self):
+        """Test fallback comment truncates noisy LLM responses"""
+        provider = MockLLMProvider()
+        service = ReviewService(provider)
+
+        long_response = "X" * (service.FALLBACK_RESPONSE_PREVIEW_CHARS + 200)
+        comments = service._create_fallback_comment(
+            long_response, "test.py", "Parsing error: expected JSON format"
+        )
+
+        assert len(comments) == 1
+        assert "...[response truncated]" in comments[0].content
+
 
 class TestExtractSummary:
     """Tests for _extract_summary method"""

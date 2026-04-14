@@ -6,6 +6,7 @@ We keep HTTP logic centralized to avoid divergence across providers.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict
 
 import requests
@@ -14,6 +15,14 @@ from luminary.domain.config.retry import RetryConfig
 from luminary.infrastructure.retry import _should_retry_http_error
 
 logger = logging.getLogger(__name__)
+
+NON_RETRYABLE_REQUEST_EXCEPTIONS = (
+    requests.exceptions.InvalidURL,
+    requests.exceptions.InvalidSchema,
+    requests.exceptions.MissingSchema,
+    requests.exceptions.InvalidHeader,
+    requests.exceptions.URLRequired,
+)
 
 
 # Re-export RetryConfig for convenience
@@ -98,28 +107,51 @@ def post_json_with_retries(
     retry_config = retry
 
     from tenacity import (
-        before_sleep_log,
+        retry as tenacity_retry,
+    )
+    from tenacity import (
         retry_if_exception,
         stop_after_attempt,
         wait_exponential,
         wait_random,
-    )
-    from tenacity import (
-        retry as tenacity_retry,
     )
 
     def _retry_condition(exception: Exception) -> bool:
         if isinstance(exception, requests.exceptions.RequestException):
             if isinstance(exception, requests.exceptions.HTTPError):
                 return _should_retry_http_error(exception)
-            return True  # Retry network errors
+            if isinstance(exception, NON_RETRYABLE_REQUEST_EXCEPTIONS):
+                return False
+            return isinstance(
+                exception,
+                (requests.exceptions.ConnectionError, requests.exceptions.Timeout),
+            )
         return False
 
+    attempts = {"count": 0}
+
     def _make_request() -> requests.Response:
+        attempts["count"] += 1
         logger.debug(f"HTTP POST {url}")
         resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
         resp.raise_for_status()
         return resp
+
+    def _before_sleep(retry_state) -> None:
+        exc = retry_state.outcome.exception() if retry_state.outcome else None
+        status_code = None
+        if isinstance(exc, requests.exceptions.HTTPError) and exc.response is not None:
+            status_code = exc.response.status_code
+        logger.warning(
+            "Retrying HTTP request",
+            extra={
+                "component": "http_client",
+                "operation": "post_json",
+                "attempt": retry_state.attempt_number,
+                "max_attempts": retry_config.max_attempts,
+                "status_code": status_code,
+            },
+        )
 
     # Настройка wait с jitter
     wait = wait_exponential(
@@ -138,13 +170,28 @@ def post_json_with_retries(
         wait=wait,
         retry=retry_if_exception(_retry_condition),
         reraise=True,
-        before_sleep=before_sleep_log(logger, logging.WARNING),
+        before_sleep=_before_sleep,
     )
     def _request_with_retry():
         return _make_request()
 
+    start_time = time.monotonic()
     try:
-        return _request_with_retry()
+        response = _request_with_retry()
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+        logger.info(
+            "HTTP request completed",
+            extra={
+                "component": "http_client",
+                "operation": "post_json",
+                "attempt": attempts["count"],
+                "max_attempts": retry_config.max_attempts,
+                "status_code": response.status_code,
+                "duration_ms": duration_ms,
+                "retry_count": max(0, attempts["count"] - 1),
+            },
+        )
+        return response
     except requests.exceptions.HTTPError:
         raise
     except Exception as e:

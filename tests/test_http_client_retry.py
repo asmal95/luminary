@@ -61,6 +61,71 @@ def test_post_json_does_not_retry_on_401(monkeypatch):
         )
 
 
+def test_post_json_does_not_retry_on_403(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_post(*args, **kwargs):
+        calls["n"] += 1
+        return _make_response(403, {"error": "forbidden"})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    monkeypatch.setattr("tenacity.nap.sleep", lambda *_: None)
+
+    with pytest.raises(requests.HTTPError):
+        post_json_with_retries(
+            "http://example.test",
+            payload={"x": 1},
+            headers={"Content-Type": "application/json"},
+            timeout=1,
+            retry=RetryConfig(max_attempts=3, initial_delay=0, backoff_multiplier=2, jitter=0),
+        )
+    assert calls["n"] == 1
+
+
+def test_post_json_retries_on_connection_error(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_post(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise requests.exceptions.ConnectionError("connection reset")
+        return _make_response(200, {"ok": True})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    monkeypatch.setattr("tenacity.nap.sleep", lambda *_: None)
+
+    resp = post_json_with_retries(
+        "http://example.test",
+        payload={"x": 1},
+        headers={"Content-Type": "application/json"},
+        timeout=1,
+        retry=RetryConfig(max_attempts=3, initial_delay=0, backoff_multiplier=2, jitter=0),
+    )
+    assert resp.status_code == 200
+    assert calls["n"] == 3
+
+
+def test_post_json_does_not_retry_on_invalid_url(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_post(*args, **kwargs):
+        calls["n"] += 1
+        raise requests.exceptions.InvalidURL("bad url")
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    monkeypatch.setattr("tenacity.nap.sleep", lambda *_: None)
+
+    with pytest.raises(RuntimeError, match="HTTP request failed"):
+        post_json_with_retries(
+            "http://example.test",
+            payload={"x": 1},
+            headers={"Content-Type": "application/json"},
+            timeout=1,
+            retry=RetryConfig(max_attempts=3, initial_delay=0, backoff_multiplier=2, jitter=0),
+        )
+    assert calls["n"] == 1
+
+
 def test_post_json_with_jitter(monkeypatch):
     """Test that jitter doesn't break retry logic"""
     calls = {"n": 0}

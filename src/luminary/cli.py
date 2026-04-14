@@ -376,6 +376,7 @@ def mr(
             review_service=review_service,
             max_files=limits_config.max_files,
             max_lines=limits_config.max_lines,
+            max_concurrent_files=limits_config.max_concurrent_files,
             comment_mode=mode,
         )
 

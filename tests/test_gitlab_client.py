@@ -260,6 +260,67 @@ class TestRetryLogic:
             assert result == "success"
             assert call_count["n"] == 3
 
+    def test_no_retry_on_non_gitlab_programming_error(self):
+        """Test non-GitLab exceptions fail fast without retries"""
+        with patch("luminary.infrastructure.gitlab.client.gitlab.Gitlab") as mock_gitlab_class:
+            mock_gl = MagicMock()
+            mock_gitlab_class.return_value = mock_gl
+
+            client = GitLabClient(private_token="test-token", max_retries=3)
+            call_count = {"n": 0}
+
+            def failing_func():
+                call_count["n"] += 1
+                raise TypeError("Programming error")
+
+            with pytest.raises(TypeError, match="Programming error"):
+                client._retry_api_call(failing_func)
+
+            assert call_count["n"] == 1
+
+    def test_no_retry_on_gitlab_error_without_status_and_non_transient_message(self):
+        """Test GitLab errors without status are not retried by default"""
+        with patch("luminary.infrastructure.gitlab.client.gitlab.Gitlab") as mock_gitlab_class:
+            mock_gl = MagicMock()
+            mock_gitlab_class.return_value = mock_gl
+
+            client = GitLabClient(private_token="test-token", max_retries=3)
+            call_count = {"n": 0}
+
+            def failing_func():
+                call_count["n"] += 1
+                error = GitlabError("Validation failed")
+                error.response_code = None
+                raise error
+
+            with pytest.raises(RuntimeError, match="GitLab API request failed after"):
+                client._retry_api_call(failing_func)
+
+            assert call_count["n"] == 1
+
+    def test_retry_on_gitlab_error_without_status_with_transient_message(self):
+        """Test transient GitLab errors without status still retry"""
+        with patch("luminary.infrastructure.gitlab.client.gitlab.Gitlab") as mock_gitlab_class:
+            mock_gl = MagicMock()
+            mock_gitlab_class.return_value = mock_gl
+
+            client = GitLabClient(private_token="test-token", max_retries=3)
+            call_count = {"n": 0}
+
+            def failing_func():
+                call_count["n"] += 1
+                if call_count["n"] < 3:
+                    error = GitlabError("Connection timed out")
+                    error.response_code = None
+                    raise error
+                return "success"
+
+            with patch("tenacity.nap.sleep"):
+                result = client._retry_api_call(failing_func)
+
+            assert result == "success"
+            assert call_count["n"] == 3
+
 
 class TestGetMergeRequest:
     """Tests for get_merge_request"""
@@ -916,8 +977,8 @@ class TestPostComment:
             assert result is True
             mock_discussions.create.assert_called_once()
 
-    def test_post_inline_comment_no_line_code_attempts_without_it(self):
-        """Test that posting inline comment without line_code attempts to post without it"""
+    def test_post_inline_comment_no_line_code_falls_back_to_general(self):
+        """Test that posting inline comment without line_code falls back to general comment"""
         with patch("luminary.infrastructure.gitlab.client.gitlab.Gitlab") as mock_gitlab_class:
             mock_gl = MagicMock()
             mock_gitlab_class.return_value = mock_gl
@@ -939,9 +1000,9 @@ class TestPostComment:
             }
             mock_project.mergerequests.get.return_value = mock_mr
 
-            # Mock successful discussion creation
-            mock_discussion = MagicMock()
-            mock_mr.discussions.create.return_value = mock_discussion
+            # Mock successful note creation
+            mock_note = MagicMock()
+            mock_mr.notes.create.return_value = mock_note
 
             client = GitLabClient(private_token="test-token")
 
@@ -953,10 +1014,11 @@ class TestPostComment:
                 file_path="test.py",
             )
 
-            # Should succeed even without line_code
+            # Should succeed by creating general comment
             assert result is True
-            # Should have attempted to create discussion
-            mock_mr.discussions.create.assert_called_once()
+            # Should have created a note (general comment), not a discussion
+            mock_mr.notes.create.assert_called_once()
+            mock_mr.discussions.create.assert_not_called()
 
     def test_post_inline_comment_falls_back_to_general_on_line_code_error(self):
         """Test that inline comment falls back to general comment on line_code error"""

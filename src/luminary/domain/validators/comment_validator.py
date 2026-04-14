@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import threading
 from typing import Any, Dict, Optional
 
 from luminary.domain.models.comment import Comment
@@ -51,6 +52,7 @@ class CommentValidator:
     threshold: float
     prompt_builder: ValidationPromptBuilder
     stats: Dict[str, Any]
+    _stats_lock: threading.Lock
 
     def __init__(
         self,
@@ -68,6 +70,7 @@ class CommentValidator:
         self.llm_provider = llm_provider
         self.threshold = threshold
         self.prompt_builder = ValidationPromptBuilder(custom_prompt)
+        self._stats_lock = threading.Lock()
         self.stats = {
             "total": 0,
             "valid": 0,
@@ -90,7 +93,8 @@ class CommentValidator:
         Returns:
             ValidationResult with validation decision and scores
         """
-        self.stats["total"] += 1
+        with self._stats_lock:
+            self.stats["total"] += 1
 
         try:
             # Build validation prompt
@@ -146,18 +150,21 @@ class CommentValidator:
 
             # Update stats
             if result.valid:
-                self.stats["valid"] += 1
+                with self._stats_lock:
+                    self.stats["valid"] += 1
             else:
-                self.stats["invalid"] += 1
+                with self._stats_lock:
+                    self.stats["invalid"] += 1
                 logger.info(f"Comment rejected: {result.reason} " f"(scores: {result.scores})")
 
             # Update score aggregates when present
             try:
                 scores = result.scores or {}
-                for k in ("relevance", "usefulness", "non_redundancy"):
-                    if isinstance(scores.get(k), (int, float)):
-                        self.stats["score_sums"][k] += float(scores[k])
-                self.stats["score_count"] += 1
+                with self._stats_lock:
+                    for k in ("relevance", "usefulness", "non_redundancy"):
+                        if isinstance(scores.get(k), (int, float)):
+                            self.stats["score_sums"][k] += float(scores[k])
+                    self.stats["score_count"] += 1
             except Exception:
                 # Don't fail validation due to stats aggregation
                 pass
@@ -165,7 +172,8 @@ class CommentValidator:
             return result
 
         except Exception as e:
-            self.stats["errors"] += 1
+            with self._stats_lock:
+                self.stats["errors"] += 1
             logger.error(f"Error validating comment: {e}", exc_info=True)
             # On error, default to invalid
             return ValidationResult(
@@ -345,7 +353,15 @@ class CommentValidator:
         Returns:
             Dictionary with validation statistics
         """
-        stats = self.stats.copy()
+        with self._stats_lock:
+            stats = {
+                "total": self.stats.get("total", 0),
+                "valid": self.stats.get("valid", 0),
+                "invalid": self.stats.get("invalid", 0),
+                "errors": self.stats.get("errors", 0),
+                "score_count": self.stats.get("score_count", 0),
+                "score_sums": dict(self.stats.get("score_sums", {})),
+            }
         count = stats.get("score_count", 0) or 0
         if count > 0:
             sums = stats.get("score_sums", {})

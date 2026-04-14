@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 class ReviewService:
     """Service for reviewing code changes"""
 
+    FALLBACK_RESPONSE_PREVIEW_CHARS = 1200
+
     llm_provider: LLMProvider
     validator: Optional[CommentValidator]
     prompt_builder: ReviewPromptBuilder
@@ -210,14 +212,80 @@ class ReviewService:
         Returns:
             JSON string or None if not found
         """
-        json_str = response.strip()
+        text = response.strip()
+        if not text:
+            return None
 
-        # Try to extract JSON from markdown code blocks
-        json_match = re.search(r'```(?:json)?\s*(\[.*?\]|{.*?"comments".*?})', response, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
+        # Prefer fenced blocks when model wraps JSON in markdown.
+        fenced_blocks = re.findall(
+            r"```(?:json)?\s*([\s\S]*?)\s*```",
+            text,
+            flags=re.IGNORECASE,
+        )
+        for block in fenced_blocks:
+            payload = self._extract_first_json_payload(block.strip())
+            if payload:
+                return payload
 
-        return json_str
+        # Fallback: scan full response and extract first balanced JSON payload.
+        return self._extract_first_json_payload(text)
+
+    def _extract_first_json_payload(self, text: str) -> Optional[str]:
+        """Extract first balanced JSON object/array from text.
+
+        Args:
+            text: Source text that may contain JSON and free-form prose
+
+        Returns:
+            Extracted JSON string or None if no balanced payload found
+        """
+        start_idx: Optional[int] = None
+        stack: List[str] = []
+        in_string = False
+        escaped = False
+
+        for i, ch in enumerate(text):
+            if start_idx is None:
+                if ch == "{":
+                    start_idx = i
+                    stack = ["}"]
+                elif ch == "[":
+                    start_idx = i
+                    stack = ["]"]
+                continue
+
+            if in_string:
+                if escaped:
+                    escaped = False
+                    continue
+                if ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+
+            if ch == '"':
+                in_string = True
+                continue
+            if ch == "{":
+                stack.append("}")
+                continue
+            if ch == "[":
+                stack.append("]")
+                continue
+            if ch in ("}", "]"):
+                if not stack or ch != stack[-1]:
+                    # Reset and continue scanning for another potential JSON payload.
+                    start_idx = None
+                    stack = []
+                    in_string = False
+                    escaped = False
+                    continue
+                stack.pop()
+                if not stack and start_idx is not None:
+                    return text[start_idx : i + 1].strip()
+
+        return None
 
     def _fix_common_json_errors(self, json_str: str) -> str:
         """Fix common JSON errors before parsing
@@ -263,6 +331,14 @@ class ReviewService:
         try:
             return json.loads(json_str)
         except json.JSONDecodeError:
+            # Try to extract balanced JSON payload from noisy wrappers
+            payload = self._extract_first_json_payload(json_str)
+            if payload and payload != json_str:
+                try:
+                    return json.loads(payload)
+                except json.JSONDecodeError:
+                    pass
+
             # Try to find JSON object with "comments" field
             obj_match = re.search(r'({[^{}]*"comments"[^{}]*})', json_str, re.DOTALL)
             if obj_match:
@@ -361,8 +437,10 @@ class ReviewService:
             if not json_str:
                 raise ValueError("Could not extract JSON from response")
 
-            fixed_json = self._fix_common_json_errors(json_str)
-            data = self._parse_json_response(fixed_json)
+            data = self._parse_json_response(json_str)
+            if data is None:
+                fixed_json = self._fix_common_json_errors(json_str)
+                data = self._parse_json_response(fixed_json)
 
             if data is None:
                 raise ValueError("Could not parse JSON from response")
@@ -374,6 +452,9 @@ class ReviewService:
                 comments_array = data.get("comments", [])
             else:
                 raise ValueError(f"Unexpected JSON structure: {type(data)}")
+
+            if not isinstance(comments_array, list):
+                raise ValueError("Invalid JSON format: 'comments' must be a list")
 
             # Parse comments
             comments = []
@@ -412,9 +493,15 @@ class ReviewService:
             List with single fallback comment
         """
         if response.strip():
+            preview = response.strip()
+            if len(preview) > self.FALLBACK_RESPONSE_PREVIEW_CHARS:
+                preview = (
+                    preview[: self.FALLBACK_RESPONSE_PREVIEW_CHARS].rstrip()
+                    + "\n...[response truncated]"
+                )
             return [
                 Comment(
-                    content=f"*[{error_prefix}]*\n\n{response}",
+                    content=f"*[{error_prefix}]*\n\n{preview}",
                     file_path=file_path,
                     severity=Severity.INFO,
                 )

@@ -22,21 +22,29 @@ luminary file examples/sample_code.py
 # Mock (для тестирования)
 luminary file examples/sample_code.py --provider mock
 
-# OpenRouter (нужен API ключ)
-export OPENROUTER_API_KEY=your_key
+# OpenRouter (нужен API ключ, bash/zsh)
+export OPENROUTER_API_KEY="your_key"
 luminary file examples/sample_code.py --provider openrouter
 
-# OpenAI
-export OPENAI_API_KEY=your_key
+# OpenAI (bash/zsh)
+export OPENAI_API_KEY="your_key"
 luminary file examples/sample_code.py --provider openai
 
-# DeepSeek
-export DEEPSEEK_API_KEY=your_key
+# DeepSeek (bash/zsh)
+export DEEPSEEK_API_KEY="your_key"
 luminary file examples/sample_code.py --provider deepseek
 
-# vLLM (локальный сервер)
-set VLLM_API_URL=http://localhost:8000/v1/chat/completions
+# vLLM (локальный сервер, bash/zsh)
+export VLLM_API_URL="http://localhost:8000/v1/chat/completions"
 luminary file examples/sample_code.py --provider vllm
+```
+
+Для PowerShell используйте:
+```powershell
+$env:OPENROUTER_API_KEY = "your_key"
+$env:OPENAI_API_KEY = "your_key"
+$env:DEEPSEEK_API_KEY = "your_key"
+$env:VLLM_API_URL = "http://localhost:8000/v1/chat/completions"
 ```
 
 ### С опциями
