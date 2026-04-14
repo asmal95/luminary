@@ -99,10 +99,21 @@ code_context:
 
 prompts:
   review: |
-    ... custom review prompt ...
+    # MUST include {context}
+    ... custom review prompt with JSON output contract ...
   validation: |
-    ... custom validation prompt ...
+    # MUST include {code_context} and {comment}
+    ... custom validation prompt with JSON output contract ...
 ```
+
+### Контракт промптов (важно для совместимости)
+
+- `prompts.review` обязан содержать placeholder `{context}`.
+- `prompts.validation` обязан содержать placeholders `{code_context}` и `{comment}`.
+- Review-ответ должен быть JSON: либо массив `[]`, либо объект `{"comments": [...], "summary": "..."}`.
+- Validation-ответ должен быть JSON-объектом с ключами:
+  `valid`, `reason`, `scores.relevance`, `scores.usefulness`, `scores.non_redundancy`.
+- Финальное решение по `validator.threshold` принимается в коде, а не в тексте prompt.
 
 ## 🐳 Docker
 

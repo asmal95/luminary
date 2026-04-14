@@ -22,7 +22,11 @@ class ReviewPromptOptions:
 class ReviewPromptBuilder:
     """Builder for code review prompts"""
 
-    DEFAULT_REVIEW_PROMPT = """You are an expert code reviewer. Review the following code changes and provide constructive feedback.
+    DEFAULT_REVIEW_PROMPT = """You are an expert code reviewer.
+
+Focus on high-impact issues first: correctness bugs, security risks, API/contract mismatches,
+concurrency hazards, performance regressions, and maintainability problems that can cause defects.
+Skip cosmetic style nitpicks unless they impact readability or safety.
 
 {context}
 
@@ -30,6 +34,9 @@ CRITICAL REQUIREMENTS:
 1. Return ONLY valid JSON. No markdown code blocks, no explanations, no text outside JSON.
 2. Use line numbers EXACTLY as shown in the code block above (format: "42: code here").
 3. "line" field MUST be a number (integer), NEVER empty, NEVER null.
+4. Comment only when there is a concrete issue or actionable improvement.
+5. If context is incomplete/truncated and you cannot justify a reliable finding, return [].
+6. Keep each message concise: explain cause -> risk -> specific fix.
 
 Required JSON format:
 
@@ -54,6 +61,11 @@ Field requirements:
 - "message": STRING in double quotes - review comment
 - "suggestion": STRING in double quotes OR null (no quotes) - replacement code or null
 
+Quality bar:
+- Prioritize findings tied to changed code or directly impacted behavior.
+- Prefer one precise comment over many low-value comments.
+- Do not invent runtime/framework behavior when evidence is missing in provided context.
+
 VALID (correct):
 {{"file": "test.py", "line": 5, "message": "Fix this", "suggestion": null}}
 {{"file": "test.py", "line": 10, "message": "Improve", "suggestion": "new code"}}
@@ -75,6 +87,8 @@ Return ONLY JSON. Nothing else."""
             custom_prompt: Custom prompt template (uses default if None)
         """
         self.template = custom_prompt or self.DEFAULT_REVIEW_PROMPT
+        if "{context}" not in self.template:
+            raise ValueError("Review prompt template must include '{context}' placeholder")
 
     def build(self, file_change: FileChange, options: Optional[ReviewPromptOptions] = None) -> str:
         """Build review prompt for file change

@@ -47,6 +47,14 @@ class CommentValidator:
     """Validator for code review comments using LLM"""
 
     DEFAULT_THRESHOLD = 0.7
+    PROMPT_ECHO_STARTERS = (
+        "Task: Evaluate one code review comment and return JSON.",
+        "Task: Evaluate code review comment and return JSON.",
+        "You are a validator for code review comments",
+        "You are Qwen",
+        "You are an expert code reviewer",
+        "Evaluate this code review comment",
+    )
 
     llm_provider: LLMProvider
     threshold: float
@@ -107,43 +115,7 @@ class CommentValidator:
             # Log the raw response for debugging (truncated)
             logger.debug(f"Raw validation response (first 500 chars): {response[:500]}")
 
-            # Check if response contains the prompt (LLM sometimes echoes back the prompt)
-            # This happens when LLM returns prompt + response instead of just response
-            prompt_starters = [
-                "You are a validator for code review comments",
-                "You are Qwen",
-                "You are an expert code reviewer",
-                "Evaluate this code review comment",
-            ]
-
-            # If response starts with prompt text, remove it
-            for starter in prompt_starters:
-                if response.startswith(starter):
-                    # Find the first JSON object start
-                    json_start = response.find("{")
-                    if json_start > 50:  # JSON appears later in response (after prompt)
-                        response = response[json_start:].strip()
-                        break
-
-            # Also check if entire prompt is echoed back
-            if response.startswith(prompt[:150]):  # Check first 150 chars
-                # Extract only the response part (after prompt)
-                response = response[len(prompt) :].strip()
-
-            # If response still contains prompt text (multiline), try to extract JSON
-            if any(starter in response for starter in prompt_starters):
-                # Find JSON boundaries - look for first { and last }
-                json_start = response.find("{")
-                if json_start >= 0:
-                    json_end = response.rfind("}")
-                    if json_end > json_start:
-                        # Extract just the JSON part
-                        potential_json = response[json_start : json_end + 1]
-                        # Quick validation: does it look like JSON?
-                        if potential_json.strip().startswith(
-                            "{"
-                        ) and potential_json.strip().endswith("}"):
-                            response = potential_json.strip()
+            response = self._strip_prompt_echo(response, prompt)
 
             # Parse response
             result = self._parse_validation_response(response, comment)
@@ -194,8 +166,8 @@ class CommentValidator:
             ValidationResult
         """
         if not response or not response.strip():
-            logger.warning("Empty validation response, assuming valid")
-            return self._create_fallback_result(comment, "Empty response")
+            logger.warning("Empty validation response, marking invalid")
+            return self._create_fallback_result(comment, "Empty response", valid=False)
 
         # Extract JSON from response
         json_str = self._extract_json_from_response(response)
@@ -288,10 +260,10 @@ class CommentValidator:
         elif any(x in response_lower for x in ["valid: false", '"valid": false']):
             return self._create_fallback_result(comment, "Text parse: valid=false", valid=False)
 
-        # Default to valid (better to accept than reject on parsing errors)
-        logger.warning("Could not parse validation response, assuming valid")
+        # Default to invalid to avoid false-positive acceptance on malformed responses.
+        logger.warning("Could not parse validation response, marking invalid")
         logger.debug(f"Unparseable response (first 200 chars): {response[:200]}")
-        return self._create_fallback_result(comment, "Parse failed, assuming valid")
+        return self._create_fallback_result(comment, "Parse failed: invalid response format", valid=False)
 
     def _create_fallback_result(
         self, comment: Comment, reason: str, valid: bool = True
@@ -309,9 +281,39 @@ class CommentValidator:
         return ValidationResult(
             valid=valid,
             reason=reason,
-            scores={"relevance": 0.7, "usefulness": 0.7, "non_redundancy": 0.7},
+            scores={"relevance": 0.0, "usefulness": 0.0, "non_redundancy": 0.0},
             comment=comment,
         )
+
+    def _strip_prompt_echo(self, response: str, prompt: str) -> str:
+        """Strip echoed prompt text and keep the JSON fragment when possible."""
+        text = (response or "").strip()
+        if not text:
+            return text
+
+        # Fast path: response starts with full prompt.
+        prompt_prefix = prompt.strip()
+        if prompt_prefix and text.startswith(prompt_prefix):
+            text = text[len(prompt_prefix) :].strip()
+
+        # Common provider behavior: prepend prompt instructions before JSON.
+        starts = [s for s in self.PROMPT_ECHO_STARTERS if s] + [
+            prompt.strip().splitlines()[0] if prompt.strip() else ""
+        ]
+        starts = [s for s in starts if s]
+        if any(text.startswith(s) for s in starts):
+            json_start = text.find("{")
+            if json_start >= 0:
+                text = text[json_start:].strip()
+
+        # Multiline echo case: extract first object-like payload.
+        if any(s in text for s in starts):
+            json_start = text.find("{")
+            json_end = text.rfind("}")
+            if json_start >= 0 and json_end > json_start:
+                text = text[json_start : json_end + 1].strip()
+
+        return text
 
     def _create_validation_result(self, data: dict, comment: Comment) -> ValidationResult:
         """Create validation result from parsed data
